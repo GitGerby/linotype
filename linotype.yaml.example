@@ -1,0 +1,20 @@
+# Linotype Configuration Example
+# Place this file as 'linotype.yaml' in your working directory,
+# or in '~/.config/linotype/config.yaml', or point to it via --config.
+
+api:
+  base_url: "https://api.openai.com/v1"
+  api_key: "YOUR_API_KEY"
+  model: "gpt-4o"
+
+ocr:
+  language: "English"
+  # Optional custom system prompt. If left empty, the built-in default prompt is used.
+  # The {language} placeholder will be replaced with ocr.language.
+  # prompt: |
+  #   You are an OCR engine. The image contains subtitle text in {language}.
+  #   Return ONLY the exact text visible in the image, preserving line breaks.
+
+workers: 4
+format: "ass"
+

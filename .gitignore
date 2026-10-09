@@ -1,0 +1,11 @@
+# Binaries
+*.exe
+linotype
+
+# Local configuration
+linotype.yaml
+
+# Test artifacts
+*.ass
+*.vtt
+*.sup
