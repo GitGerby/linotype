@@ -1,10 +1,10 @@
 # Linotype — Design Plan
 
-> PGS subtitle → text-based subtitle converter powered by LLM OCR
+> PGS and VOBSUB subtitle → text-based subtitle converter powered by LLM OCR
 
 ## Overview
 
-**Linotype** is a Go CLI tool that extracts PGS (Presentation Graphic Stream) bitmap subtitles from MKV files or raw `.sup` files, sends each subtitle image to an OpenAI-compatible vision LLM for OCR, and writes the results as `.ass` (Advanced SubStation Alpha) or `.webvtt` subtitle files with proper positioning, alignment, and color.
+**Linotype** is a Go CLI tool that extracts PGS (Presentation Graphic Stream) and VOBSUB bitmap subtitles from MKV/VOB files or raw `.sup`/`.idx`/`.sub` files, sends each subtitle image to an OpenAI-compatible vision LLM for OCR, and writes the results as `.ass` (Advanced SubStation Alpha) or `.webvtt` subtitle files with proper positioning, alignment, and color.
 
 ---
 
@@ -12,10 +12,10 @@
 
 ```mermaid
 flowchart LR
-    A["Input<br/>.mkv / .sup"] --> B["MKV Demux<br/>(ffmpeg)"]
-    A --> C["PGS Parser<br/>pkg/pgs"]
+    A["Input<br/>.mkv / .vob / .sup / .idx / .sub"] --> B["Demux<br/>(ffmpeg)"]
+    A --> C["Subtitle Parser<br/>pkg/pgs & pkg/vobsub"]
     B --> C
-    C --> D["Image Renderer<br/>PDS palette → PNG"]
+    C --> D["Image Renderer<br/>Palette → PNG"]
     D --> E["LLM OCR Client<br/>OpenAI-compatible API"]
     E --> F["Subtitle Writer<br/>pkg/ass or pkg/webvtt"]
     F --> G["Output<br/>.ass / .webvtt"]
@@ -27,18 +27,18 @@ flowchart LR
 
 | Decision | Choice |
 |---|---|
-| **Input formats** | `.mkv` (auto-extract via ffmpeg) and raw `.sup` files |
+| **Input formats** | `.mkv`, `.vob` (auto-extract via ffmpeg) and raw `.sup`, `.idx`, `.sub` files |
 | **ffmpeg dependency** | Required on PATH (documented prerequisite) |
-| **PGS parsing** | Custom pure Go parser in `pkg/pgs/` with clean public API |
+| **Parsing** | Custom pure Go parsers in `pkg/pgs/` and `pkg/vobsub/` with clean public API |
 | **Output formats** | `.ass` (default) or `.webvtt`, selected via `--format` flag |
 | **OCR image format** | PNG (lossless, universal API support) |
 | **LLM configuration** | YAML config file (`linotype.yaml`) with CLI flag overrides |
 | **Config file search** | CWD → `~/.config/linotype/config.yaml` → `--config` flag |
 | **Concurrency** | `--workers N` flag (default 4), parallel OCR with ordered reassembly |
 | **Prompt strategy** | Embedded default prompt + `--language` hint; prompt overridable in YAML |
-| **Positioning** | Full mapping: PGS window/object coords → ASS `\an`/`\pos` and WebVTT `line`/`position`/`align` |
-| **Color preservation** | Extract dominant non-background color from PDS → ASS `\c` / WebVTT CSS |
-| **Multi-track handling** | Process ALL PGS tracks, output separate files (`movie.track1.ass`, etc.) |
+| **Positioning** | Full mapping: subtitle window/object coords → ASS `\an`/`\pos` and WebVTT `line`/`position`/`align` |
+| **Color preservation** | Extract dominant non-background color → ASS `\c` / WebVTT CSS |
+| **Multi-track handling** | Process ALL subtitle tracks, output separate files (`movie.track1.ass`, etc.) |
 | **Output location** | Same directory as input file, matching base name |
 | **CLI framework** | Standard `flag` package (flat, no subcommands) |
 | **YAML library** | `gopkg.in/yaml.v3` |
@@ -46,7 +46,7 @@ flowchart LR
 | **Logging** | `charmbracelet/log` |
 | **Error handling** | Fail fast on API errors (no retry, no skip) |
 | **Resume/caching** | Not in v1 |
-| **Tests** | Comprehensive: PGS parser, ASS/WebVTT formatters, mock LLM client |
+| **Tests** | Comprehensive: parsers, ASS/WebVTT formatters, mock LLM client |
 
 ---
 
@@ -66,6 +66,12 @@ linotype/
 │   │   ├── palette.go         # PDS palette → RGBA color mapping
 │   │   ├── image.go           # ODS RLE decode → image.RGBA → PNG bytes
 │   │   └── parser_test.go     # Tests with fixture data
+│   ├── vobsub/                # VOBSUB binary parser
+│   │   ├── parser.go          # Stream reader
+│   │   ├── items.go           # Parsed items and structure
+│   │   ├── palette.go         # Palette parsing
+│   │   ├── image.go           # Render functions
+│   │   └── parser_test.go     # Tests
 │   ├── ocr/                   # LLM OCR client
 │   │   ├── client.go          # OpenAI-compatible vision API client
 │   │   ├── prompt.go          # Default prompt templates + language hint
@@ -187,7 +193,7 @@ Map PGS coordinates to WebVTT cue settings:
 ## CLI Usage
 
 ```
-linotype [flags] <input.mkv|input.sup>
+linotype [flags] <input.mkv|input.sup|input.vob|input.idx|input.sub>
 
 Flags:
   --format string      Output format: ass, webvtt (default "ass")

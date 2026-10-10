@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/ocr"
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/pgs"
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/subtitle"
+	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/vobsub"
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/webvtt"
 )
 
@@ -51,7 +53,7 @@ func run() error {
 	modelFlag := flag.String("model", "", "Model name override")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <input.mkv|input.sup>\n\nFlags:\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <input.mkv|input.vob|input.sup|input.idx|input.sub>\n\nFlags:\n", filepath.Base(os.Args[0]))
 		flag.PrintDefaults()
 	}
 
@@ -64,13 +66,11 @@ func run() error {
 
 	inputPath := flag.Arg(0)
 
-	// Load config from file
 	cfg, err := config.Load(*configFlag)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Environment variable overrides
 	if env := os.Getenv("LINOTYPE_API_BASE"); env != "" {
 		cfg.API.BaseURL = env
 	}
@@ -81,7 +81,6 @@ func run() error {
 		cfg.API.Model = env
 	}
 
-	// Track which CLI flags were explicitly provided
 	providedFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {
 		providedFlags[f.Name] = true
@@ -106,7 +105,6 @@ func run() error {
 		cfg.API.Model = *modelFlag
 	}
 
-	// Validate configuration
 	if cfg.Format != "ass" && cfg.Format != "webvtt" {
 		return fmt.Errorf("unsupported output format %q (must be 'ass' or 'webvtt')", cfg.Format)
 	}
@@ -114,140 +112,206 @@ func run() error {
 		cfg.Workers = 4
 	}
 
-	// Set up logger
 	logger := log.NewWithOptions(os.Stderr, log.Options{
 		ReportTimestamp: true,
-		TimeFormat:     "15:04:05",
+		TimeFormat:      "15:04:05",
 	})
 	if *quietFlag {
 		logger.SetLevel(log.WarnLevel)
 	}
 
 	if !*quietFlag {
-		fmt.Fprintf(os.Stderr, "%s — PGS Subtitle OCR Converter\n\n", titleStyle.Render("Linotype"))
+		fmt.Fprintf(os.Stderr, "%s — Bitmap Subtitle OCR Converter (PGS & VOBSUB)\n\n", titleStyle.Render("Linotype"))
 	}
 
-	// Check input file existence
 	if _, err := os.Stat(inputPath); err != nil {
 		return fmt.Errorf("input file not found: %w", err)
 	}
 
-	// Initialize OCR client
 	ocrClient := ocr.NewClient(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.Model)
 	systemPrompt := ocr.BuildPrompt(cfg.OCR.Language, cfg.OCR.Prompt)
 
-	// Context with interrupt handling
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	ext := strings.ToLower(filepath.Ext(inputPath))
 	switch ext {
-	case ".mkv":
-		return processMKV(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
+	case ".mkv", ".vob":
+		return processContainer(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
 	case ".sup":
 		outPath := getOutputFilename(inputPath, -1, "", cfg.Format)
 		return processSUP(ctx, inputPath, outPath, cfg, ocrClient, systemPrompt, *quietFlag, logger, Dimensions{})
+	case ".idx":
+		return processIDX(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
+	case ".sub":
+		return processSUB(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
 	default:
-		return fmt.Errorf("unsupported input file format %q (expected .mkv or .sup)", ext)
+		return fmt.Errorf("unsupported input file format %q (expected .mkv, .vob, .sup, .idx, or .sub)", ext)
 	}
 }
 
-// processMKV extracts all PGS tracks from the MKV and converts each.
-func processMKV(ctx context.Context, mkvPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger) error {
-	logger.Info("Inspecting MKV tracks", "file", mkvPath)
+func processContainer(ctx context.Context, mediaPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger) error {
+	logger.Info("Inspecting container tracks", "file", mediaPath)
 
-	vidW, vidH, err := extract.GetVideoDimensions(ctx, mkvPath)
+	vidW, vidH, err := extract.GetVideoDimensions(ctx, mediaPath)
 	if err != nil {
-		logger.Warn("Could not detect MKV video dimensions, using subtitle stream dimensions", "err", err)
+		logger.Warn("Could not detect video dimensions, using subtitle stream dimensions", "err", err)
 	} else if vidW > 0 && vidH > 0 {
-		logger.Info("Detected MKV video dimensions", "width", vidW, "height", vidH)
+		logger.Info("Detected video dimensions", "width", vidW, "height", vidH)
 	}
 
-	tracks, err := extract.ListPGSTracks(ctx, mkvPath)
+	tracks, err := extract.ListSubtitleTracks(ctx, mediaPath)
 	if err != nil {
-		return fmt.Errorf("failed to list PGS tracks in MKV (ensure ffprobe is on PATH): %w", err)
+		return fmt.Errorf("failed to list subtitle tracks: %w", err)
 	}
 
 	if len(tracks) == 0 {
-		return fmt.Errorf("no PGS (hdmv_pgs_subtitle) tracks found in %s", mkvPath)
+		return fmt.Errorf("no subtitle tracks found in %s", mediaPath)
 	}
 
-	logger.Info("Found PGS subtitle tracks", "count", len(tracks))
+	logger.Info("Found subtitle tracks", "count", len(tracks))
 	for _, t := range tracks {
-		logger.Info("Track", "index", t.Index, "relative_index", t.RelIndex, "language", t.Language, "title", t.Title)
+		logger.Info("Track", "index", t.Index, "relative_index", t.RelIndex, "language", t.Language, "codec", string(t.Codec))
 	}
 
 	for _, track := range tracks {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := processContainerTrack(ctx, mediaPath, track, cfg, ocrClient, prompt, quiet, logger, vidW, vidH); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
+func processContainerTrack(ctx context.Context, mediaPath string, track extract.Track, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger, vidW, vidH int) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if track.Codec == extract.CodecPGS {
 		tempSup, err := os.CreateTemp("", fmt.Sprintf("linotype_track%d_*.sup", track.RelIndex))
 		if err != nil {
-			return fmt.Errorf("failed to create temporary .sup file: %w", err)
+			return err
 		}
 		tempSupPath := tempSup.Name()
 		tempSup.Close()
 		defer os.Remove(tempSupPath)
 
 		logger.Info("Extracting PGS track", "track", track.RelIndex, "lang", track.Language)
-		if err := extract.ExtractPGS(ctx, mkvPath, track.RelIndex, tempSupPath); err != nil {
-			return fmt.Errorf("failed to extract track %d from MKV (ensure ffmpeg is on PATH): %w", track.RelIndex, err)
+		if err := extract.ExtractPGS(ctx, mediaPath, track.RelIndex, tempSupPath); err != nil {
+			return err
 		}
 
-		outPath := getOutputFilename(mkvPath, track.RelIndex, track.Language, cfg.Format)
+		outPath := getOutputFilename(mediaPath, track.RelIndex, track.Language, cfg.Format)
 		if err := processSUP(ctx, tempSupPath, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{Width: vidW, Height: vidH}); err != nil {
-			return fmt.Errorf("error processing track %d: %w", track.RelIndex, err)
+			return err
+		}
+	} else if track.Codec == extract.CodecVobSub {
+		tempSub, err := os.CreateTemp("", fmt.Sprintf("linotype_track%d_*.sub", track.RelIndex))
+		if err != nil {
+			return err
+		}
+		tempSubPath := tempSub.Name()
+		tempSub.Close()
+		defer os.Remove(tempSubPath)
+
+		logger.Info("Extracting DVD Subtitle track", "track", track.RelIndex, "lang", track.Language)
+		if err := extract.ExtractDVDSubtitle(ctx, mediaPath, track.RelIndex, tempSubPath); err != nil {
+			return err
+		}
+
+		// Parse codec private or use fallback palette
+		palette := vobsub.DefaultPalette()
+		codecPriv, err := extract.GetTrackCodecPrivate(ctx, mediaPath, track.RelIndex)
+		if err == nil && len(codecPriv) > 0 {
+			idxInfo, err := vobsub.ParseIdx(bytes.NewReader(codecPriv))
+			if err == nil && idxInfo.Palette != nil {
+				palette = idxInfo.Palette
+			}
+		}
+
+		f, err := os.Open(tempSubPath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		items, err := vobsub.ParseStream(f, palette, vidW, vidH)
+		if err != nil {
+			return err
+		}
+
+		outPath := getOutputFilename(mediaPath, track.RelIndex, track.Language, cfg.Format)
+		if err := processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{Width: vidW, Height: vidH}); err != nil {
+			return err
 		}
 	}
-
 	return nil
 }
 
-// Dimensions specifies width and height dimensions for video or subtitle scaling.
-type Dimensions struct {
-	Width  int
-	Height int
+func processIDX(ctx context.Context, idxPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger) error {
+	subPath := strings.TrimSuffix(idxPath, filepath.Ext(idxPath)) + ".sub"
+	if _, err := os.Stat(subPath); err != nil {
+		return fmt.Errorf("companion .sub file not found for .idx")
+	}
+
+	idxFile, err := os.Open(idxPath)
+	if err != nil {
+		return err
+	}
+	defer idxFile.Close()
+
+	idxInfo, err := vobsub.ParseIdx(idxFile)
+	if err != nil {
+		return err
+	}
+
+	subFile, err := os.Open(subPath)
+	if err != nil {
+		return err
+	}
+	defer subFile.Close()
+
+	for _, track := range idxInfo.Tracks {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		
+		items, err := vobsub.ParseIndexedWithInfo(idxInfo, subFile, track.Index)
+		if err != nil {
+			logger.Warn("Failed to parse track", "track", track.Index, "err", err)
+			continue
+		}
+
+		outPath := getOutputFilename(idxPath, track.Index, track.Language, cfg.Format)
+		if err := processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// VideoDimensions is an alias for Dimensions.
-type VideoDimensions = Dimensions
+func processSUB(ctx context.Context, subPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger) error {
+	idxPath := strings.TrimSuffix(subPath, filepath.Ext(subPath)) + ".idx"
+	if _, err := os.Stat(idxPath); err == nil {
+		return processIDX(ctx, idxPath, cfg, ocrClient, prompt, quiet, logger)
+	}
 
-// TargetDimensions is an alias for Dimensions.
-type TargetDimensions = Dimensions
+	f, err := os.Open(subPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 
-// TargetDim is an alias for Dimensions.
-type TargetDim = Dimensions
+	items, err := vobsub.ParseStream(f, vobsub.DefaultPalette(), 0, 0)
+	if err != nil {
+		return err
+	}
 
-// NewDimensions creates a Dimensions struct with the specified width and height.
-func NewDimensions(width, height int) Dimensions {
-	return Dimensions{Width: width, Height: height}
+	outPath := getOutputFilename(subPath, -1, "", cfg.Format)
+	return processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{})
 }
 
-// NewTargetDimensions creates a TargetDimensions struct with the specified width and height.
-func NewTargetDimensions(width, height int) TargetDimensions {
-	return TargetDimensions{Width: width, Height: height}
-}
-
-// NewTargetDim creates a TargetDim struct with the specified width and height.
-func NewTargetDim(width, height int) TargetDim {
-	return TargetDim{Width: width, Height: height}
-}
-
-// IsZero reports whether either dimension is zero or negative.
-func (d Dimensions) IsZero() bool {
-	return d.Width <= 0 || d.Height <= 0
-}
-
-// String returns a string representation of the dimensions in "WxH" format.
-func (d Dimensions) String() string {
-	return fmt.Sprintf("%dx%d", d.Width, d.Height)
-}
-
-// processSUP parses a .sup file, performs OCR, and writes the output subtitle file.
-// If targetDim has non-zero width and height, subtitle positions will be scaled to match.
 func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger, targetDim Dimensions) error {
-
 	logger.Info("Parsing PGS subtitle stream", "file", supPath)
 
 	f, err := os.Open(supPath)
@@ -268,6 +332,19 @@ func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config
 		return fmt.Errorf("failed to extract subtitle items: %w", err)
 	}
 
+	return processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, targetDim)
+}
+
+type Dimensions struct {
+	Width  int
+	Height int
+}
+
+func (d Dimensions) IsZero() bool {
+	return d.Width <= 0 || d.Height <= 0
+}
+
+func processSubtitleItems(ctx context.Context, items []subtitle.Item, outPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger, targetDim Dimensions) error {
 	totalItems := len(items)
 	if totalItems == 0 {
 		logger.Warn("No visible subtitle items found in stream")
@@ -276,12 +353,11 @@ func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config
 
 	logger.Info("Extracted subtitle images for OCR", "count", totalItems, "workers", cfg.Workers)
 
-	// Set up concurrency and fail-fast context
 	ocrCtx, cancelOCR := context.WithCancel(ctx)
 	defer cancelOCR()
 
 	type job struct {
-		item pgs.SubtitleItem
+		item subtitle.Item
 	}
 
 	type result struct {
@@ -319,13 +395,11 @@ func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config
 		}()
 	}
 
-	// Goroutine to close results when workers finish
 	go func() {
 		wg.Wait()
 		close(results)
 	}()
 
-	// Progress tracker
 	var prog progress.Model
 	if !quiet {
 		prog = progress.New(
@@ -379,7 +453,6 @@ func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config
 		return ctx.Err()
 	}
 
-	// Assemble subtitle events in chronological order
 	events := make([]subtitle.Event, len(items))
 	for i, item := range items {
 		x := item.X

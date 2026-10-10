@@ -7,12 +7,21 @@ import (
 	"os/exec"
 )
 
-// Track represents a PGS subtitle track found in an MKV file.
+// SubtitleCodec represents the subtitle format
+type SubtitleCodec string
+
+const (
+	CodecPGS    SubtitleCodec = "hdmv_pgs_subtitle"
+	CodecVobSub SubtitleCodec = "dvd_subtitle"
+)
+
+// Track represents a subtitle track found in a media file.
 type Track struct {
-	Index    int    // Absolute stream index in the MKV
-	RelIndex int    // Relative index among subtitle streams
-	Language string // Language tag (e.g., "eng", "jpn")
-	Title    string // Track title if set
+	Index    int           // Absolute stream index in the media file
+	RelIndex int           // Relative index among subtitle streams
+	Language string        // Language tag (e.g., "eng", "jpn")
+	Title    string        // Track title if set
+	Codec    SubtitleCodec // Format of the subtitle track
 }
 
 type ffprobeOutput struct {
@@ -81,9 +90,9 @@ func buildFfprobeCmd(ctx context.Context, mkvPath string) *exec.Cmd {
 	return exec.CommandContext(ctx, "ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "s", mkvPath)
 }
 
-// ListPGSTracks uses ffprobe to find all PGS (hdmv_pgs_subtitle) tracks in an MKV.
-func ListPGSTracks(ctx context.Context, mkvPath string) ([]Track, error) {
-	cmd := buildFfprobeCmd(ctx, mkvPath)
+// ListSubtitleTracks uses ffprobe to find all PGS (hdmv_pgs_subtitle) and VOBSUB (dvd_subtitle) tracks.
+func ListSubtitleTracks(ctx context.Context, mediaPath string) ([]Track, error) {
+	cmd := buildFfprobeCmd(ctx, mediaPath)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("ffprobe failed: %w", err)
@@ -101,13 +110,20 @@ func parseFfprobeOutput(data []byte) ([]Track, error) {
 	var tracks []Track
 	relIndex := 0
 	for _, st := range probe.Streams {
-		if st.CodecName == "hdmv_pgs_subtitle" {
+		if st.CodecName == "hdmv_pgs_subtitle" || st.CodecName == "dvd_subtitle" {
 			tracks = append(tracks, Track{
 				Index:    st.Index,
 				RelIndex: relIndex,
 				Language: st.Tags.Language,
 				Title:    st.Tags.Title,
+				Codec:    SubtitleCodec(st.CodecName),
 			})
+		}
+		if st.CodecName != "" && (st.CodecName == "hdmv_pgs_subtitle" || st.CodecName == "dvd_subtitle" || st.CodecName == "subrip" || st.CodecName == "ass" || st.CodecName == "mov_text" || st.CodecName == "webvtt") {
+			// Actually we just increment relIndex for ANY subtitle stream to match ffmpeg's 0:s:relIndex.
+			// Wait, ffmpeg's 0:s:X applies to all subtitle streams.
+			// The original code unconditionally incremented relIndex for all streams in probe.Streams.
+			// Since we only requested `-select_streams s`, all streams are subtitle streams.
 		}
 		relIndex++
 	}
@@ -131,3 +147,45 @@ func ExtractPGS(ctx context.Context, mkvPath string, trackRelIndex int, outputPa
 	return nil
 }
 
+
+// buildExtractDVDCmd returns the exec.Cmd to run ffmpeg for DVD subtitle extraction.
+func buildExtractDVDCmd(ctx context.Context, mediaPath string, trackRelIndex int, outputPath string) *exec.Cmd {
+	mapArg := fmt.Sprintf("0:s:%d", trackRelIndex)
+	return exec.CommandContext(ctx, "ffmpeg", "-y", "-i", mediaPath, "-map", mapArg, "-c", "copy", "-f", "vob", outputPath)
+}
+
+// ExtractDVDSubtitle extracts a DVD subtitle track from an MKV or VOB to a .sub (MPEG-PS) file.
+func ExtractDVDSubtitle(ctx context.Context, mediaPath string, trackRelIndex int, outputPath string) error {
+	cmd := buildExtractDVDCmd(ctx, mediaPath, trackRelIndex, outputPath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ffmpeg DVD extraction failed: %w", err)
+	}
+	return nil
+}
+
+// GetTrackCodecPrivate retrieves the CodecPrivate data of a specific track from an MKV file.
+func GetTrackCodecPrivate(ctx context.Context, mediaPath string, trackRelIndex int) ([]byte, error) {
+	// ffprobe -v quiet -show_entries stream=codec_private -select_streams s:trackRelIndex -print_format json
+	mapArg := fmt.Sprintf("s:%d", trackRelIndex)
+	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "quiet", "-show_entries", "stream=codec_private", "-select_streams", mapArg, "-print_format", "json", mediaPath)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe codec_private failed: %w", err)
+	}
+
+	var probe struct {
+		Streams []struct {
+			CodecPrivate string `json:"codec_private"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(out, &probe); err != nil {
+		return nil, fmt.Errorf("failed to parse ffprobe codec_private JSON: %w", err)
+	}
+
+	if len(probe.Streams) == 0 {
+		return nil, nil // Not found or no streams matched
+	}
+
+	return []byte(probe.Streams[0].CodecPrivate), nil
+}

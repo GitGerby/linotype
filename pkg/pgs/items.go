@@ -1,30 +1,14 @@
 package pgs
 
 import (
-	"image/color"
 	"time"
+	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/subtitle"
 )
 
-// SubtitleItem represents an extracted subtitle image with timing and geometry,
-// ready for OCR processing.
-type SubtitleItem struct {
-	Index       int
-	StartTime   time.Duration
-	EndTime     time.Duration
-	PNGData     []byte
-	X           int
-	Y           int
-	Width       int
-	Height      int
-	VideoWidth  int
-	VideoHeight int
-	Color       color.RGBA
-}
-
 // ExtractSubtitleItems analyzes a sequence of DisplaySets, pairs appearance and
-// disappearance sets, and renders each subtitle into a SubtitleItem.
-func ExtractSubtitleItems(sets []DisplaySet) ([]SubtitleItem, error) {
-	var items []SubtitleItem
+// disappearance sets, and renders each subtitle into a subtitle.Item.
+func ExtractSubtitleItems(sets []DisplaySet) ([]subtitle.Item, error) {
+	var items []subtitle.Item
 
 	type activeSub struct {
 		set   DisplaySet
@@ -84,10 +68,10 @@ func ExtractSubtitleItems(sets []DisplaySet) ([]SubtitleItem, error) {
 	return items, nil
 }
 
-func buildItem(idx int, set DisplaySet, start, end time.Duration) (SubtitleItem, error) {
+func buildItem(idx int, set DisplaySet, start, end time.Duration) (subtitle.Item, error) {
 	pngData, dominantColor, x, y, w, h, err := RenderDisplaySet(&set)
 	if err != nil {
-		return SubtitleItem{}, err
+		return subtitle.Item{}, err
 	}
 
 	vw := int(set.PCS.Width)
@@ -99,7 +83,7 @@ func buildItem(idx int, set DisplaySet, start, end time.Duration) (SubtitleItem,
 		vh = 1080
 	}
 
-	return SubtitleItem{
+	return subtitle.Item{
 		Index:       idx,
 		StartTime:   start,
 		EndTime:     end,

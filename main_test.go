@@ -236,13 +236,9 @@ func TestProcessSUP_4KScaling(t *testing.T) {
 }
 
 func TestDimensions(t *testing.T) {
-	d := NewDimensions(1920, 1080)
+	d := Dimensions{Width: 1920, Height: 1080}
 	if d.Width != 1920 || d.Height != 1080 {
 		t.Errorf("expected 1920x1080, got %dx%d", d.Width, d.Height)
-	}
-
-	if d.String() != "1920x1080" {
-		t.Errorf("expected String() '1920x1080', got %q", d.String())
 	}
 
 	if !(Dimensions{}).IsZero() {
@@ -265,107 +261,6 @@ func TestDimensions(t *testing.T) {
 	}
 	if d.IsZero() {
 		t.Errorf("expected 1920x1080 to not be IsZero()")
-	}
-
-	// Verify VideoDimensions, TargetDimensions, and TargetDim aliases and constructors
-	var vd VideoDimensions = d
-	if vd.Width != 1920 || vd.Height != 1080 {
-		t.Errorf("VideoDimensions alias mismatch")
-	}
-
-	var td TargetDimensions = d
-	if td.Width != 1920 || td.Height != 1080 {
-		t.Errorf("TargetDimensions alias mismatch")
-	}
-
-	var tdim TargetDim = d
-	if tdim.Width != 1920 || tdim.Height != 1080 {
-		t.Errorf("TargetDim alias mismatch")
-	}
-
-	tdNew := NewTargetDimensions(3840, 2160)
-	if tdNew.Width != 3840 || tdNew.Height != 2160 {
-		t.Errorf("NewTargetDimensions constructor mismatch")
-	}
-
-	tdimNew := NewTargetDim(3840, 2160)
-	if tdimNew.Width != 3840 || tdimNew.Height != 2160 {
-		t.Errorf("NewTargetDim constructor mismatch")
-	}
-}
-
-func TestProcessSUP_TypeAliasesAndConstructors(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]interface{}{
-			"choices": []map[string]interface{}{
-				{
-					"message": map[string]string{
-						"content": "Alias Subtitle",
-					},
-				},
-			},
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	tempDir := t.TempDir()
-	supPath := filepath.Join(tempDir, "test.sup")
-	supBytes := buildTestSUP(t)
-	if err := os.WriteFile(supPath, supBytes, 0644); err != nil {
-		t.Fatalf("failed to write test.sup: %v", err)
-	}
-
-	logger := log.New(bytes.NewBuffer(nil))
-	ocrClient := ocr.NewClient(server.URL, "test-key", "gpt-4o")
-
-	cfgASS := &config.Config{
-		Format:  "ass",
-		Workers: 2,
-	}
-	cfgASS.OCR.Language = "English"
-
-	// Test with VideoDimensions alias
-	assPathVD := filepath.Join(tempDir, "test_vd.ass")
-	err := processSUP(context.Background(), supPath, assPathVD, cfgASS, ocrClient, "ocr prompt", true, logger, VideoDimensions{Width: 3840, Height: 2160})
-	if err != nil {
-		t.Fatalf("processSUP VideoDimensions failed: %v", err)
-	}
-
-	// Test with TargetDimensions alias
-	assPathTD := filepath.Join(tempDir, "test_td.ass")
-	err = processSUP(context.Background(), supPath, assPathTD, cfgASS, ocrClient, "ocr prompt", true, logger, TargetDimensions{Width: 3840, Height: 2160})
-	if err != nil {
-		t.Fatalf("processSUP TargetDimensions failed: %v", err)
-	}
-
-	// Test with TargetDim alias
-	assPathTDim := filepath.Join(tempDir, "test_tdim.ass")
-	err = processSUP(context.Background(), supPath, assPathTDim, cfgASS, ocrClient, "ocr prompt", true, logger, TargetDim{Width: 3840, Height: 2160})
-	if err != nil {
-		t.Fatalf("processSUP TargetDim failed: %v", err)
-	}
-
-	// Test with NewDimensions constructor
-	assPathNew := filepath.Join(tempDir, "test_new.ass")
-	err = processSUP(context.Background(), supPath, assPathNew, cfgASS, ocrClient, "ocr prompt", true, logger, NewDimensions(3840, 2160))
-	if err != nil {
-		t.Fatalf("processSUP NewDimensions failed: %v", err)
-	}
-
-	for _, path := range []string{assPathVD, assPathTD, assPathTDim, assPathNew} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("failed to read generated ASS: %v", err)
-		}
-		str := string(content)
-		if !strings.Contains(str, "PlayResX: 3840") {
-			t.Errorf("%s: missing PlayResX: 3840", path)
-		}
-		if !strings.Contains(str, "\\pos(400,1604)") {
-			t.Errorf("%s: missing scaled \\pos(400,1604)", path)
-		}
 	}
 }
 
