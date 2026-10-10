@@ -137,10 +137,8 @@ func RenderDisplaySet(set *DisplaySet) ([]byte, color.RGBA, int, int, int, int, 
 		objMap[set.Objects[i].ID] = &set.Objects[i]
 	}
 
-	minX := int(set.PCS.Objects[0].X)
-	minY := int(set.PCS.Objects[0].Y)
-	maxX := minX
-	maxY := minY
+	first := true
+	var minX, minY, maxX, maxY int
 	matchedAny := false
 
 	for _, comp := range set.PCS.Objects {
@@ -148,22 +146,49 @@ func RenderDisplaySet(set *DisplaySet) ([]byte, color.RGBA, int, int, int, int, 
 		if !ok || obj.Width == 0 || obj.Height == 0 {
 			continue
 		}
+		cW := int(obj.Width)
+		cH := int(obj.Height)
+		if comp.CroppedFlag && comp.CropWidth > 0 && comp.CropHeight > 0 {
+			srcStartX := int(comp.CropX)
+			srcStartY := int(comp.CropY)
+			if srcStartX >= int(obj.Width) || srcStartY >= int(obj.Height) {
+				continue
+			}
+			cW = int(comp.CropWidth)
+			cH = int(comp.CropHeight)
+			if srcStartX+cW > int(obj.Width) {
+				cW = int(obj.Width) - srcStartX
+			}
+			if srcStartY+cH > int(obj.Height) {
+				cH = int(obj.Height) - srcStartY
+			}
+		}
+		if cW <= 0 || cH <= 0 {
+			continue
+		}
 		matchedAny = true
 		cX := int(comp.X)
 		cY := int(comp.Y)
-		cW := int(obj.Width)
-		cH := int(obj.Height)
-		if cX < minX {
+
+		if first {
 			minX = cX
-		}
-		if cY < minY {
 			minY = cY
-		}
-		if cX+cW > maxX {
 			maxX = cX + cW
-		}
-		if cY+cH > maxY {
 			maxY = cY + cH
+			first = false
+		} else {
+			if cX < minX {
+				minX = cX
+			}
+			if cY < minY {
+				minY = cY
+			}
+			if cX+cW > maxX {
+				maxX = cX + cW
+			}
+			if cY+cH > maxY {
+				maxY = cY + cH
+			}
 		}
 	}
 
@@ -176,6 +201,12 @@ func RenderDisplaySet(set *DisplaySet) ([]byte, color.RGBA, int, int, int, int, 
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	var totalCounts [256]int
 
+	hasVisible := false
+	visMinX := width
+	visMinY := height
+	visMaxX := -1
+	visMaxY := -1
+
 	for _, comp := range set.PCS.Objects {
 		obj, ok := objMap[comp.ObjectID]
 		if !ok || obj.Width == 0 || obj.Height == 0 {
@@ -187,22 +218,62 @@ func RenderDisplaySet(set *DisplaySet) ([]byte, color.RGBA, int, int, int, int, 
 			return nil, color.RGBA{}, 0, 0, 0, 0, fmt.Errorf("failed to decode object %d RLE: %w", obj.ID, err)
 		}
 
+		srcStartX := 0
+		srcStartY := 0
+		cW := int(obj.Width)
+		cH := int(obj.Height)
+		if comp.CroppedFlag && comp.CropWidth > 0 && comp.CropHeight > 0 {
+			srcStartX = int(comp.CropX)
+			srcStartY = int(comp.CropY)
+			if srcStartX >= int(obj.Width) || srcStartY >= int(obj.Height) {
+				continue
+			}
+			cW = int(comp.CropWidth)
+			cH = int(comp.CropHeight)
+			if srcStartX+cW > int(obj.Width) {
+				cW = int(obj.Width) - srcStartX
+			}
+			if srcStartY+cH > int(obj.Height) {
+				cH = int(obj.Height) - srcStartY
+			}
+		}
+
 		offsetX := int(comp.X) - minX
 		offsetY := int(comp.Y) - minY
 
-		idx := 0
-		for y := 0; y < int(obj.Height); y++ {
-			for x := 0; x < int(obj.Width); x++ {
+		for cy := 0; cy < cH; cy++ {
+			srcY := srcStartY + cy
+			if srcY >= int(obj.Height) {
+				break
+			}
+			for cx := 0; cx < cW; cx++ {
+				srcX := srcStartX + cx
+				if srcX >= int(obj.Width) {
+					break
+				}
+				idx := srcY*int(obj.Width) + srcX
 				if idx < len(pixels) {
 					pIndex := pixels[idx]
-					idx++
 					rgba := set.Palette.ToRGBA(pIndex)
 					if rgba.A > 0 {
 						totalCounts[pIndex]++
-						targetX := offsetX + x
-						targetY := offsetY + y
+						targetX := offsetX + cx
+						targetY := offsetY + cy
 						if targetX >= 0 && targetX < width && targetY >= 0 && targetY < height {
 							img.SetRGBA(targetX, targetY, rgba)
+							if targetX < visMinX {
+								visMinX = targetX
+							}
+							if targetX > visMaxX {
+								visMaxX = targetX
+							}
+							if targetY < visMinY {
+								visMinY = targetY
+							}
+							if targetY > visMaxY {
+								visMaxY = targetY
+							}
+							hasVisible = true
 						}
 					}
 				}
@@ -210,12 +281,33 @@ func RenderDisplaySet(set *DisplaySet) ([]byte, color.RGBA, int, int, int, int, 
 		}
 	}
 
+	outImg := img
+	boxX := minX
+	boxY := minY
+	boxW := width
+	boxH := height
+
+	if hasVisible && visMaxX >= visMinX && visMaxY >= visMinY {
+		boxX = minX + visMinX
+		boxY = minY + visMinY
+		boxW = visMaxX - visMinX + 1
+		boxH = visMaxY - visMinY + 1
+
+		cropped := image.NewRGBA(image.Rect(0, 0, boxW, boxH))
+		for cy := 0; cy < boxH; cy++ {
+			for cx := 0; cx < boxW; cx++ {
+				cropped.SetRGBA(cx, cy, img.RGBAAt(visMinX+cx, visMinY+cy))
+			}
+		}
+		outImg = cropped
+	}
+
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	if err := png.Encode(&buf, outImg); err != nil {
 		return nil, color.RGBA{}, 0, 0, 0, 0, fmt.Errorf("failed to encode composite PNG: %w", err)
 	}
 
 	dominantColor := DominantColor(&set.Palette, totalCounts)
-	return buf.Bytes(), dominantColor, minX, minY, width, height, nil
+	return buf.Bytes(), dominantColor, boxX, boxY, boxW, boxH, nil
 }
 

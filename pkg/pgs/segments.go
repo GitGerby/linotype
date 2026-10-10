@@ -32,11 +32,12 @@ type PCS struct {
 
 // CompositionObject represents an object in the PCS
 type CompositionObject struct {
-	ObjectID    uint16
-	WindowID    byte
-	CroppedFlag bool
-	X           uint16
-	Y           uint16
+	ObjectID     uint16
+	WindowID     byte
+	CroppedFlag  bool
+	ForcedOnFlag bool
+	X            uint16
+	Y            uint16
 	// Crop fields (only if CroppedFlag)
 	CropX      uint16
 	CropY      uint16

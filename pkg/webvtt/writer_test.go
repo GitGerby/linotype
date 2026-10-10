@@ -66,3 +66,35 @@ World`
 	}
 }
 
+func TestWriteWebVTT_4K(t *testing.T) {
+	events := []subtitle.Event{
+		{
+			Index:       1,
+			StartTime:   time.Second + 234*time.Millisecond,
+			EndTime:     2*time.Second + 567*time.Millisecond,
+			Text:        "4K Subtitle",
+			X:           400,
+			Y:           1600,
+			Width:       200,
+			Height:      100,
+			VideoWidth:  3840,
+			VideoHeight: 2160,
+		},
+	}
+
+	var buf bytes.Buffer
+	err := Write(&buf, events)
+	if err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+
+	output := buf.String()
+	expectedBlock := `1
+00:00:01.234 --> 00:00:02.567 line:74% position:13% align:start
+4K Subtitle`
+	if !strings.Contains(output, expectedBlock) {
+		t.Errorf("4K event not formatted correctly. Got:\n%s", output)
+	}
+}
+
+

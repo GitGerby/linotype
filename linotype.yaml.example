@@ -3,7 +3,7 @@
 # or in '~/.config/linotype/config.yaml', or point to it via --config.
 
 api:
-  base_url: "https://api.openai.com/v1"
+  base_url: "http://127.0.0.1:9931/v1"
   api_key: "YOUR_API_KEY"
   model: "gpt-4o"
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -145,7 +146,7 @@ func run() error {
 		return processMKV(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
 	case ".sup":
 		outPath := getOutputFilename(inputPath, -1, "", cfg.Format)
-		return processSUP(ctx, inputPath, outPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
+		return processSUP(ctx, inputPath, outPath, cfg, ocrClient, systemPrompt, *quietFlag, logger, Dimensions{})
 	default:
 		return fmt.Errorf("unsupported input file format %q (expected .mkv or .sup)", ext)
 	}
@@ -153,7 +154,14 @@ func run() error {
 
 // processMKV extracts all PGS tracks from the MKV and converts each.
 func processMKV(ctx context.Context, mkvPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger) error {
-	logger.Info("Inspecting MKV subtitle tracks", "file", mkvPath)
+	logger.Info("Inspecting MKV tracks", "file", mkvPath)
+
+	vidW, vidH, err := extract.GetVideoDimensions(ctx, mkvPath)
+	if err != nil {
+		logger.Warn("Could not detect MKV video dimensions, using subtitle stream dimensions", "err", err)
+	} else if vidW > 0 && vidH > 0 {
+		logger.Info("Detected MKV video dimensions", "width", vidW, "height", vidH)
+	}
 
 	tracks, err := extract.ListPGSTracks(ctx, mkvPath)
 	if err != nil {
@@ -188,7 +196,7 @@ func processMKV(ctx context.Context, mkvPath string, cfg *config.Config, ocrClie
 		}
 
 		outPath := getOutputFilename(mkvPath, track.RelIndex, track.Language, cfg.Format)
-		if err := processSUP(ctx, tempSupPath, outPath, cfg, ocrClient, prompt, quiet, logger); err != nil {
+		if err := processSUP(ctx, tempSupPath, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{Width: vidW, Height: vidH}); err != nil {
 			return fmt.Errorf("error processing track %d: %w", track.RelIndex, err)
 		}
 	}
@@ -196,8 +204,50 @@ func processMKV(ctx context.Context, mkvPath string, cfg *config.Config, ocrClie
 	return nil
 }
 
+// Dimensions specifies width and height dimensions for video or subtitle scaling.
+type Dimensions struct {
+	Width  int
+	Height int
+}
+
+// VideoDimensions is an alias for Dimensions.
+type VideoDimensions = Dimensions
+
+// TargetDimensions is an alias for Dimensions.
+type TargetDimensions = Dimensions
+
+// TargetDim is an alias for Dimensions.
+type TargetDim = Dimensions
+
+// NewDimensions creates a Dimensions struct with the specified width and height.
+func NewDimensions(width, height int) Dimensions {
+	return Dimensions{Width: width, Height: height}
+}
+
+// NewTargetDimensions creates a TargetDimensions struct with the specified width and height.
+func NewTargetDimensions(width, height int) TargetDimensions {
+	return TargetDimensions{Width: width, Height: height}
+}
+
+// NewTargetDim creates a TargetDim struct with the specified width and height.
+func NewTargetDim(width, height int) TargetDim {
+	return TargetDim{Width: width, Height: height}
+}
+
+// IsZero reports whether either dimension is zero or negative.
+func (d Dimensions) IsZero() bool {
+	return d.Width <= 0 || d.Height <= 0
+}
+
+// String returns a string representation of the dimensions in "WxH" format.
+func (d Dimensions) String() string {
+	return fmt.Sprintf("%dx%d", d.Width, d.Height)
+}
+
 // processSUP parses a .sup file, performs OCR, and writes the output subtitle file.
-func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger) error {
+// If targetDim has non-zero width and height, subtitle positions will be scaled to match.
+func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger, targetDim Dimensions) error {
+
 	logger.Info("Parsing PGS subtitle stream", "file", supPath)
 
 	f, err := os.Open(supPath)
@@ -332,17 +382,37 @@ func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config
 	// Assemble subtitle events in chronological order
 	events := make([]subtitle.Event, len(items))
 	for i, item := range items {
+		x := item.X
+		y := item.Y
+		w := item.Width
+		h := item.Height
+		vw := item.VideoWidth
+		vh := item.VideoHeight
+
+		if !targetDim.IsZero() && (vw != targetDim.Width || vh != targetDim.Height) {
+			if vw > 0 && vh > 0 {
+				scaleX := float64(targetDim.Width) / float64(vw)
+				scaleY := float64(targetDim.Height) / float64(vh)
+				x = int(math.Round(float64(x) * scaleX))
+				y = int(math.Round(float64(y) * scaleY))
+				w = int(math.Round(float64(w) * scaleX))
+				h = int(math.Round(float64(h) * scaleY))
+			}
+			vw = targetDim.Width
+			vh = targetDim.Height
+		}
+
 		events[i] = subtitle.Event{
 			Index:       item.Index,
 			StartTime:   item.StartTime,
 			EndTime:     item.EndTime,
 			Text:        textByIndex[item.Index],
-			X:           item.X,
-			Y:           item.Y,
-			Width:       item.Width,
-			Height:      item.Height,
-			VideoWidth:  item.VideoWidth,
-			VideoHeight: item.VideoHeight,
+			X:           x,
+			Y:           y,
+			Width:       w,
+			Height:      h,
+			VideoWidth:  vw,
+			VideoHeight: vh,
 			Color:       item.Color,
 		}
 	}

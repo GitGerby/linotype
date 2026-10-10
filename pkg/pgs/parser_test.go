@@ -139,3 +139,90 @@ func TestParserIntegration(t *testing.T) {
 	}
 }
 
+func TestParserCompositionObjectFlags(t *testing.T) {
+	// Construct PCS with 2 composition objects:
+	// Object 1: forced-on (0x40), not cropped -> 8 bytes (no crop data)
+	// Object 2: cropped (0x80) -> 16 bytes (has crop data)
+	pcsData := make([]byte, 11)
+	binary.BigEndian.PutUint16(pcsData[0:2], 1920)
+	binary.BigEndian.PutUint16(pcsData[2:4], 1080)
+	pcsData[4] = 24
+	binary.BigEndian.PutUint16(pcsData[5:7], 1)
+	pcsData[7] = 0x80 // Epoch start
+	pcsData[8] = 0
+	pcsData[9] = 1
+	pcsData[10] = 2 // 2 objects
+
+	// Object 1: ID=1, Win=0, Flags=0x40 (forced on, NOT cropped), X=100, Y=200
+	obj1 := make([]byte, 8)
+	binary.BigEndian.PutUint16(obj1[0:2], 1)
+	obj1[2] = 0
+	obj1[3] = 0x40 // forced-on flag
+	binary.BigEndian.PutUint16(obj1[4:6], 100)
+	binary.BigEndian.PutUint16(obj1[6:8], 200)
+
+	// Object 2: ID=2, Win=0, Flags=0x80 (cropped), X=300, Y=400, Crop: (10, 20, 30, 40)
+	obj2 := make([]byte, 16)
+	binary.BigEndian.PutUint16(obj2[0:2], 2)
+	obj2[2] = 0
+	obj2[3] = 0x80 // cropped flag
+	binary.BigEndian.PutUint16(obj2[4:6], 300)
+	binary.BigEndian.PutUint16(obj2[6:8], 400)
+	binary.BigEndian.PutUint16(obj2[8:10], 10)
+	binary.BigEndian.PutUint16(obj2[10:12], 20)
+	binary.BigEndian.PutUint16(obj2[12:14], 30)
+	binary.BigEndian.PutUint16(obj2[14:16], 40)
+
+	pcsData = append(pcsData, obj1...)
+	pcsData = append(pcsData, obj2...)
+
+	var stream []byte
+	stream = append(stream, buildSegment(SegmentTypePCS, pcsData)...)
+	stream = append(stream, buildSegment(SegmentTypeEND, nil)...)
+
+	sets, err := Parse(bytes.NewReader(stream))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if len(sets) != 1 {
+		t.Fatalf("expected 1 set, got %d", len(sets))
+	}
+	pcs := sets[0].PCS
+	if len(pcs.Objects) != 2 {
+		t.Fatalf("expected 2 objects, got %d", len(pcs.Objects))
+	}
+
+	o1 := pcs.Objects[0]
+	if o1.ObjectID != 1 {
+		t.Errorf("obj 1 ID: expected 1, got %d", o1.ObjectID)
+	}
+	if o1.CroppedFlag {
+		t.Errorf("obj 1 CroppedFlag: expected false for flags=0x40, got true")
+	}
+	if !o1.ForcedOnFlag {
+		t.Errorf("obj 1 ForcedOnFlag: expected true for flags=0x40, got false")
+	}
+	if o1.X != 100 || o1.Y != 200 {
+		t.Errorf("obj 1 position: expected (100, 200), got (%d, %d)", o1.X, o1.Y)
+	}
+
+	o2 := pcs.Objects[1]
+	if o2.ObjectID != 2 {
+		t.Errorf("obj 2 ID: expected 2, got %d", o2.ObjectID)
+	}
+	if !o2.CroppedFlag {
+		t.Errorf("obj 2 CroppedFlag: expected true for flags=0x80, got false")
+	}
+	if o2.ForcedOnFlag {
+		t.Errorf("obj 2 ForcedOnFlag: expected false for flags=0x80, got true")
+	}
+	if o2.X != 300 || o2.Y != 400 {
+		t.Errorf("obj 2 position: expected (300, 400), got (%d, %d)", o2.X, o2.Y)
+	}
+	if o2.CropX != 10 || o2.CropY != 20 || o2.CropWidth != 30 || o2.CropHeight != 40 {
+		t.Errorf("obj 2 crop: expected (10, 20, 30, 40), got (%d, %d, %d, %d)", o2.CropX, o2.CropY, o2.CropWidth, o2.CropHeight)
+	}
+}
+
+

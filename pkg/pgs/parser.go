@@ -84,12 +84,14 @@ func Parse(r io.Reader) ([]DisplaySet, error) {
 				if offset+8 > len(data) {
 					break
 				}
+				flags := data[offset+3]
 				obj := CompositionObject{
-					ObjectID:    binary.BigEndian.Uint16(data[offset : offset+2]),
-					WindowID:    data[offset+2],
-					CroppedFlag: data[offset+3] != 0,
-					X:           binary.BigEndian.Uint16(data[offset+4 : offset+6]),
-					Y:           binary.BigEndian.Uint16(data[offset+6 : offset+8]),
+					ObjectID:     binary.BigEndian.Uint16(data[offset : offset+2]),
+					WindowID:     data[offset+2],
+					CroppedFlag:  (flags & 0x80) != 0,
+					ForcedOnFlag: (flags & 0x40) != 0,
+					X:            binary.BigEndian.Uint16(data[offset+4 : offset+6]),
+					Y:            binary.BigEndian.Uint16(data[offset+6 : offset+8]),
 				}
 				offset += 8
 

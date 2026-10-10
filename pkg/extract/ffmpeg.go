@@ -26,6 +26,56 @@ type ffprobeOutput struct {
 	} `json:"streams"`
 }
 
+type ffprobeVideoOutput struct {
+	Streams []struct {
+		Index       int    `json:"index"`
+		CodecName   string `json:"codec_name"`
+		CodecType   string `json:"codec_type"`
+		Width       int    `json:"width"`
+		Height      int    `json:"height"`
+		Disposition struct {
+			AttachedPic int `json:"attached_pic"`
+		} `json:"disposition"`
+	} `json:"streams"`
+}
+
+// buildFfprobeVideoCmd returns the exec.Cmd to query video streams using ffprobe.
+func buildFfprobeVideoCmd(ctx context.Context, mkvPath string) *exec.Cmd {
+	return exec.CommandContext(ctx, "ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v", mkvPath)
+}
+
+// GetVideoDimensions uses ffprobe to find the video dimensions (width, height) of an MKV file.
+func GetVideoDimensions(ctx context.Context, mkvPath string) (int, int, error) {
+	cmd := buildFfprobeVideoCmd(ctx, mkvPath)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, fmt.Errorf("ffprobe video query failed: %w", err)
+	}
+
+	return parseFfprobeVideoOutput(out)
+}
+
+func parseFfprobeVideoOutput(data []byte) (int, int, error) {
+	var probe ffprobeVideoOutput
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return 0, 0, fmt.Errorf("failed to parse ffprobe video JSON: %w", err)
+	}
+
+	for _, st := range probe.Streams {
+		if st.Width > 0 && st.Height > 0 && st.Disposition.AttachedPic == 0 {
+			return st.Width, st.Height, nil
+		}
+	}
+
+	for _, st := range probe.Streams {
+		if st.Width > 0 && st.Height > 0 {
+			return st.Width, st.Height, nil
+		}
+	}
+
+	return 0, 0, fmt.Errorf("no video stream with valid dimensions found")
+}
+
 // buildFfprobeCmd returns the exec.Cmd to run ffprobe.
 func buildFfprobeCmd(ctx context.Context, mkvPath string) *exec.Cmd {
 	return exec.CommandContext(ctx, "ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "s", mkvPath)
