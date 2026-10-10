@@ -25,7 +25,10 @@ func DefaultPalette() *Palette {
 
 // ParsePalette parses an .idx palette line.
 func ParsePalette(line string) (*Palette, error) {
-	line = strings.TrimPrefix(line, "palette: ")
+	line = strings.TrimSpace(line)
+	if idx := strings.Index(line, ":"); idx != -1 {
+		line = strings.TrimSpace(line[idx+1:])
+	}
 	parts := strings.Split(line, ",")
 	if len(parts) != 16 {
 		return nil, fmt.Errorf("invalid palette length")

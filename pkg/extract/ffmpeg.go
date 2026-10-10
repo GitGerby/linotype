@@ -2,9 +2,11 @@ package extract
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // SubtitleCodec represents the subtitle format
@@ -17,18 +19,25 @@ const (
 
 // Track represents a subtitle track found in a media file.
 type Track struct {
-	Index    int           // Absolute stream index in the media file
-	RelIndex int           // Relative index among subtitle streams
-	Language string        // Language tag (e.g., "eng", "jpn")
-	Title    string        // Track title if set
-	Codec    SubtitleCodec // Format of the subtitle track
+	Index     int           // Absolute stream index in the media file
+	RelIndex  int           // Relative index among subtitle streams
+	Language  string        // Language tag (e.g., "eng", "jpn")
+	Title     string        // Track title if set
+	Codec     SubtitleCodec // Format of the subtitle track
+	Width     int           // Subtitle track width if available
+	Height    int           // Subtitle track height if available
+	Extradata []byte        // Subtitle track extradata/codec_private if available
 }
 
 type ffprobeOutput struct {
 	Streams []struct {
-		Index     int `json:"index"`
-		CodecName string `json:"codec_name"`
-		Tags      struct {
+		Index        int    `json:"index"`
+		CodecName    string `json:"codec_name"`
+		Width        int    `json:"width"`
+		Height       int    `json:"height"`
+		CodecPrivate string `json:"codec_private"`
+		Extradata    string `json:"extradata"`
+		Tags         struct {
 			Language string `json:"language"`
 			Title    string `json:"title"`
 		} `json:"tags"`
@@ -110,20 +119,32 @@ func parseFfprobeOutput(data []byte) ([]Track, error) {
 	var tracks []Track
 	relIndex := 0
 	for _, st := range probe.Streams {
+		var extra []byte
+		val := st.CodecPrivate
+		if val == "" {
+			val = st.Extradata
+		}
+		if val != "" {
+			clean := strings.TrimPrefix(strings.TrimSpace(val), "0x")
+			clean = strings.TrimPrefix(clean, "0X")
+			if dec, err := hex.DecodeString(clean); err == nil && len(dec) > 0 {
+				extra = dec
+			} else {
+				extra = []byte(val)
+			}
+		}
+
 		if st.CodecName == "hdmv_pgs_subtitle" || st.CodecName == "dvd_subtitle" {
 			tracks = append(tracks, Track{
-				Index:    st.Index,
-				RelIndex: relIndex,
-				Language: st.Tags.Language,
-				Title:    st.Tags.Title,
-				Codec:    SubtitleCodec(st.CodecName),
+				Index:     st.Index,
+				RelIndex:  relIndex,
+				Language:  st.Tags.Language,
+				Title:     st.Tags.Title,
+				Codec:     SubtitleCodec(st.CodecName),
+				Width:     st.Width,
+				Height:    st.Height,
+				Extradata: extra,
 			})
-		}
-		if st.CodecName != "" && (st.CodecName == "hdmv_pgs_subtitle" || st.CodecName == "dvd_subtitle" || st.CodecName == "subrip" || st.CodecName == "ass" || st.CodecName == "mov_text" || st.CodecName == "webvtt") {
-			// Actually we just increment relIndex for ANY subtitle stream to match ffmpeg's 0:s:relIndex.
-			// Wait, ffmpeg's 0:s:X applies to all subtitle streams.
-			// The original code unconditionally incremented relIndex for all streams in probe.Streams.
-			// Since we only requested `-select_streams s`, all streams are subtitle streams.
 		}
 		relIndex++
 	}
@@ -147,7 +168,6 @@ func ExtractPGS(ctx context.Context, mkvPath string, trackRelIndex int, outputPa
 	return nil
 }
 
-
 // buildExtractDVDCmd returns the exec.Cmd to run ffmpeg for DVD subtitle extraction.
 func buildExtractDVDCmd(ctx context.Context, mediaPath string, trackRelIndex int, outputPath string) *exec.Cmd {
 	mapArg := fmt.Sprintf("0:s:%d", trackRelIndex)
@@ -163,23 +183,22 @@ func ExtractDVDSubtitle(ctx context.Context, mediaPath string, trackRelIndex int
 	return nil
 }
 
-// GetTrackCodecPrivate retrieves the CodecPrivate data of a specific track from an MKV file.
-func GetTrackCodecPrivate(ctx context.Context, mediaPath string, trackRelIndex int) ([]byte, error) {
-	// ffprobe -v quiet -show_entries stream=codec_private -select_streams s:trackRelIndex -print_format json
+// buildCodecPrivateCmd returns the exec.Cmd to query track codec_private / extradata using ffprobe.
+func buildCodecPrivateCmd(ctx context.Context, mediaPath string, trackRelIndex int) *exec.Cmd {
 	mapArg := fmt.Sprintf("s:%d", trackRelIndex)
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "quiet", "-show_entries", "stream=codec_private", "-select_streams", mapArg, "-print_format", "json", mediaPath)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("ffprobe codec_private failed: %w", err)
-	}
+	return exec.CommandContext(ctx, "ffprobe", "-v", "quiet", "-show_entries", "stream=codec_private,extradata", "-select_streams", mapArg, "-print_format", "json", mediaPath)
+}
 
+// parseCodecPrivateOutput parses ffprobe JSON output for stream codec_private or extradata.
+func parseCodecPrivateOutput(data []byte) ([]byte, error) {
 	var probe struct {
 		Streams []struct {
 			CodecPrivate string `json:"codec_private"`
+			Extradata    string `json:"extradata"`
 		} `json:"streams"`
 	}
 
-	if err := json.Unmarshal(out, &probe); err != nil {
+	if err := json.Unmarshal(data, &probe); err != nil {
 		return nil, fmt.Errorf("failed to parse ffprobe codec_private JSON: %w", err)
 	}
 
@@ -187,5 +206,28 @@ func GetTrackCodecPrivate(ctx context.Context, mediaPath string, trackRelIndex i
 		return nil, nil // Not found or no streams matched
 	}
 
-	return []byte(probe.Streams[0].CodecPrivate), nil
+	val := probe.Streams[0].CodecPrivate
+	if val == "" {
+		val = probe.Streams[0].Extradata
+	}
+	if val == "" {
+		return nil, nil
+	}
+
+	clean := strings.TrimPrefix(strings.TrimSpace(val), "0x")
+	clean = strings.TrimPrefix(clean, "0X")
+	if decoded, err := hex.DecodeString(clean); err == nil && len(decoded) > 0 {
+		return decoded, nil
+	}
+	return []byte(val), nil
+}
+
+// GetTrackCodecPrivate retrieves the CodecPrivate / extradata of a specific track from a media file.
+func GetTrackCodecPrivate(ctx context.Context, mediaPath string, trackRelIndex int) ([]byte, error) {
+	cmd := buildCodecPrivateCmd(ctx, mediaPath, trackRelIndex)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe codec_private failed: %w", err)
+	}
+	return parseCodecPrivateOutput(out)
 }

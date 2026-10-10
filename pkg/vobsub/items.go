@@ -17,12 +17,32 @@ func ParseStream(subReader io.Reader, palette *Palette, videoW, videoH int) ([]s
 		return nil, err
 	}
 
+	explicitH := videoH > 0
+	if videoW <= 0 {
+		videoW = 720
+	}
+	if videoH <= 0 {
+		videoH = 480
+	}
+
 	var items []subtitle.Item
 	for i, raw := range rawSPUs {
 		spu, err := ParseSPU(raw.Data)
 		if err != nil {
 			// Skip invalid SPUs
 			continue
+		}
+
+		if spu.X+spu.Width > videoW {
+			videoW = spu.X + spu.Width
+		}
+		if spu.Y+spu.Height > videoH {
+			if !explicitH && videoH == 480 {
+				videoH = 576
+			}
+			if spu.Y+spu.Height > videoH {
+				videoH = spu.Y + spu.Height
+			}
 		}
 
 		img, domColor, err := Render(spu.Pixels, spu.Width, spu.Height, spu.Colors, spu.Alphas, palette)
@@ -61,6 +81,11 @@ func ParseStream(subReader io.Reader, palette *Palette, videoW, videoH int) ([]s
 		})
 	}
 
+	for i := range items {
+		items[i].VideoWidth = videoW
+		items[i].VideoHeight = videoH
+	}
+
 	return items, nil
 }
 
@@ -91,6 +116,13 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 	// Substream ID in idx/sub is usually 0x20 + track.Index, but the cue points directly to the packet start.
 	// We can just read from the file position.
 	
+	vw := 720
+	vh := 480
+	if idxInfo != nil && idxInfo.Width > 0 && idxInfo.Height > 0 {
+		vw = idxInfo.Width
+		vh = idxInfo.Height
+	}
+
 	for i, cue := range track.Cues {
 		_, err := subReader.Seek(cue.FilePos, io.SeekStart)
 		if err != nil {
@@ -120,6 +152,18 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 		spu, err := ParseSPU(raw.Data)
 		if err != nil {
 			continue
+		}
+
+		if spu.X+spu.Width > vw {
+			vw = spu.X + spu.Width
+		}
+		if spu.Y+spu.Height > vh {
+			if vh == 480 && (idxInfo == nil || idxInfo.Height <= 0) {
+				vh = 576
+			}
+			if spu.Y+spu.Height > vh {
+				vh = spu.Y + spu.Height
+			}
 		}
 
 		pal := idxInfo.Palette
@@ -160,9 +204,16 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 			Y:           spu.Y,
 			Width:       spu.Width,
 			Height:      spu.Height,
+			VideoWidth:  vw,
+			VideoHeight: vh,
 			Color:       domColor,
 			PNGData:     pngData,
 		})
+	}
+
+	for i := range items {
+		items[i].VideoWidth = vw
+		items[i].VideoHeight = vh
 	}
 
 	return items, nil

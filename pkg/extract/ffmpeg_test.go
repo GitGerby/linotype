@@ -145,4 +145,140 @@ func TestParseFfprobeVideoOutput(t *testing.T) {
 	}
 }
 
+func TestParseFfprobeOutput_SubtitleDimensions(t *testing.T) {
+	data := []byte(`{
+		"streams": [
+			{
+				"index": 2,
+				"codec_name": "dvd_subtitle",
+				"width": 640,
+				"height": 480,
+				"tags": { "language": "eng" }
+			}
+		]
+	}`)
+
+	tracks, err := parseFfprobeOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(tracks) != 1 {
+		t.Fatalf("expected 1 track, got %d", len(tracks))
+	}
+
+	if tracks[0].Width != 640 || tracks[0].Height != 480 {
+		t.Errorf("expected 640x480, got %dx%d", tracks[0].Width, tracks[0].Height)
+	}
+}
+
+func TestParseFfprobeOutput_Extradata(t *testing.T) {
+	data := []byte(`{
+		"streams": [
+			{
+				"index": 2,
+				"codec_name": "dvd_subtitle",
+				"width": 640,
+				"height": 480,
+				"extradata": "73697a653a2036343078343830",
+				"tags": { "language": "eng" }
+			}
+		]
+	}`)
+
+	tracks, err := parseFfprobeOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tracks) != 1 {
+		t.Fatalf("expected 1 track, got %d", len(tracks))
+	}
+	if string(tracks[0].Extradata) != "size: 640x480" {
+		t.Errorf("expected Extradata 'size: 640x480', got %q", string(tracks[0].Extradata))
+	}
+}
+
+func TestBuildCodecPrivateCmd(t *testing.T) {
+	cmd := buildCodecPrivateCmd(context.Background(), "video.mkv", 1)
+	expectedArgs := []string{"ffprobe", "-v", "quiet", "-show_entries", "stream=codec_private,extradata", "-select_streams", "s:1", "-print_format", "json", "video.mkv"}
+	if len(cmd.Args) != len(expectedArgs) {
+		t.Fatalf("args length mismatch: expected %d, got %d", len(expectedArgs), len(cmd.Args))
+	}
+	for i, arg := range expectedArgs {
+		if cmd.Args[i] != arg {
+			t.Errorf("arg %d: expected %s, got %s", i, arg, cmd.Args[i])
+		}
+	}
+}
+
+func TestParseCodecPrivateOutput(t *testing.T) {
+	// Case 1: extradata with hex
+	jsonExtradata := []byte(`{
+		"streams": [
+			{
+				"extradata": "73697a653a2036343078343830"
+			}
+		]
+	}`)
+	out, err := parseCodecPrivateOutput(jsonExtradata)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != "size: 640x480" {
+		t.Errorf("expected 'size: 640x480', got %q", string(out))
+	}
+
+	// Case 2: codec_private with hex and 0x prefix
+	json0x := []byte(`{
+		"streams": [
+			{
+				"codec_private": "0x73697a653a2036343078343830"
+			}
+		]
+	}`)
+	out, err = parseCodecPrivateOutput(json0x)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != "size: 640x480" {
+		t.Errorf("expected 'size: 640x480', got %q", string(out))
+	}
+
+	// Case 3: plain text
+	jsonPlain := []byte(`{
+		"streams": [
+			{
+				"codec_private": "size: 640x480\npalette: 000000"
+			}
+		]
+	}`)
+	out, err = parseCodecPrivateOutput(jsonPlain)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != "size: 640x480\npalette: 000000" {
+		t.Errorf("expected plain text, got %q", string(out))
+	}
+
+	// Case 4: empty streams
+	jsonEmpty := []byte(`{"streams": []}`)
+	out, err = parseCodecPrivateOutput(jsonEmpty)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != nil {
+		t.Errorf("expected nil for empty streams, got %v", out)
+	}
+
+	// Case 5: empty field in stream
+	jsonEmptyField := []byte(`{"streams": [{}]}`)
+	out, err = parseCodecPrivateOutput(jsonEmptyField)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != nil {
+		t.Errorf("expected nil for empty field, got %v", out)
+	}
+}
+
 

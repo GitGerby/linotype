@@ -221,12 +221,35 @@ func processContainerTrack(ctx context.Context, mediaPath string, track extract.
 
 		// Parse codec private or use fallback palette
 		palette := vobsub.DefaultPalette()
-		codecPriv, err := extract.GetTrackCodecPrivate(ctx, mediaPath, track.RelIndex)
-		if err == nil && len(codecPriv) > 0 {
-			idxInfo, err := vobsub.ParseIdx(bytes.NewReader(codecPriv))
-			if err == nil && idxInfo.Palette != nil {
-				palette = idxInfo.Palette
+		subW := track.Width
+		subH := track.Height
+
+		var codecPriv []byte
+		if len(track.Extradata) > 0 {
+			codecPriv = track.Extradata
+		} else {
+			cp, err := extract.GetTrackCodecPrivate(ctx, mediaPath, track.RelIndex)
+			if err == nil {
+				codecPriv = cp
 			}
+		}
+
+		if len(codecPriv) > 0 {
+			idxInfo, err := vobsub.ParseIdx(bytes.NewReader(codecPriv))
+			if err == nil {
+				if idxInfo.Palette != nil {
+					palette = idxInfo.Palette
+				}
+				if idxInfo.Width > 0 && idxInfo.Height > 0 {
+					subW = idxInfo.Width
+					subH = idxInfo.Height
+				}
+			}
+		}
+
+		if subW <= 0 || subH <= 0 {
+			subW = 720
+			subH = 480
 		}
 
 		f, err := os.Open(tempSubPath)
@@ -235,7 +258,7 @@ func processContainerTrack(ctx context.Context, mediaPath string, track extract.
 		}
 		defer f.Close()
 
-		items, err := vobsub.ParseStream(f, palette, vidW, vidH)
+		items, err := vobsub.ParseStream(f, palette, subW, subH)
 		if err != nil {
 			return err
 		}
@@ -283,7 +306,11 @@ func processIDX(ctx context.Context, idxPath string, cfg *config.Config, ocrClie
 		}
 
 		outPath := getOutputFilename(idxPath, track.Index, track.Language, cfg.Format)
-		if err := processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{}); err != nil {
+		targetDim := Dimensions{}
+		if idxInfo.Width > 0 && idxInfo.Height > 0 {
+			targetDim = Dimensions{Width: idxInfo.Width, Height: idxInfo.Height}
+		}
+		if err := processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, targetDim); err != nil {
 			return err
 		}
 	}
@@ -302,13 +329,13 @@ func processSUB(ctx context.Context, subPath string, cfg *config.Config, ocrClie
 	}
 	defer f.Close()
 
-	items, err := vobsub.ParseStream(f, vobsub.DefaultPalette(), 0, 0)
+	items, err := vobsub.ParseStream(f, vobsub.DefaultPalette(), 720, 480)
 	if err != nil {
 		return err
 	}
 
 	outPath := getOutputFilename(subPath, -1, "", cfg.Format)
-	return processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{})
+	return processSubtitleItems(ctx, items, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{Width: 720, Height: 480})
 }
 
 func processSUP(ctx context.Context, supPath, outPath string, cfg *config.Config, ocrClient *ocr.Client, prompt string, quiet bool, logger *log.Logger, targetDim Dimensions) error {
@@ -461,6 +488,23 @@ func processSubtitleItems(ctx context.Context, items []subtitle.Item, outPath st
 		h := item.Height
 		vw := item.VideoWidth
 		vh := item.VideoHeight
+
+		if vw <= 0 {
+			if x+w <= 720 && y+h <= 576 {
+				vw = 720
+			} else {
+				vw = 1920
+			}
+		}
+		if vh <= 0 {
+			if x+w <= 720 && y+h <= 480 {
+				vh = 480
+			} else if x+w <= 720 && y+h <= 576 {
+				vh = 576
+			} else {
+				vh = 1080
+			}
+		}
 
 		if !targetDim.IsZero() && (vw != targetDim.Width || vh != targetDim.Height) {
 			if vw > 0 && vh > 0 {

@@ -22,10 +22,20 @@ func Write(w io.Writer, events []subtitle.Event) error {
 		vw := ev.VideoWidth
 		vh := ev.VideoHeight
 		if vw == 0 {
-			vw = 1920
+			if ev.X+ev.Width <= 720 && ev.Y+ev.Height <= 576 {
+				vw = 720
+			} else {
+				vw = 1920
+			}
 		}
 		if vh == 0 {
-			vh = 1080
+			if ev.X+ev.Width <= 720 && ev.Y+ev.Height <= 480 {
+				vh = 480
+			} else if ev.X+ev.Width <= 720 && ev.Y+ev.Height <= 576 {
+				vh = 576
+			} else {
+				vh = 1080
+			}
 		}
 
 		linePct := (ev.Y * 100) / vh

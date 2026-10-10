@@ -16,6 +16,7 @@ import (
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/config"
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/ocr"
 	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/pgs"
+	"git.dyson.somuchcrypto.com/gearnsc/linotype/pkg/subtitle"
 )
 
 func buildTestSUP(t *testing.T) []byte {
@@ -383,4 +384,289 @@ func TestProcessSUP_ZeroAndNegativeDimensions(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessSubtitleItems_NonstandardVobSubResolution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": "Bottom Subtitle Text",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	logger := log.New(bytes.NewBuffer(nil))
+	ocrClient := ocr.NewClient(server.URL, "test-key", "gpt-4o")
+
+	// DVD 640x480 item placed near bottom (Y=400 in 480 height = 83.3%)
+	items := []subtitle.Item{
+		{
+			Index:       1,
+			StartTime:   1000 * 1000 * 1000,
+			EndTime:     2000 * 1000 * 1000,
+			X:           50,
+			Y:           400,
+			Width:       200,
+			Height:      40,
+			VideoWidth:  640,
+			VideoHeight: 480,
+			PNGData:     []byte{1, 2, 3},
+		},
+	}
+
+	targetDim := Dimensions{Width: 1440, Height: 960}
+
+	// 1. ASS output verification
+	assPath := filepath.Join(tempDir, "vobsub_scaled.ass")
+	cfgASS := &config.Config{
+		Format:  "ass",
+		Workers: 1,
+	}
+	cfgASS.OCR.Language = "English"
+
+	err := processSubtitleItems(context.Background(), items, assPath, cfgASS, ocrClient, "prompt", true, logger, targetDim)
+	if err != nil {
+		t.Fatalf("processSubtitleItems ASS failed: %v", err)
+	}
+
+	assBytes, err := os.ReadFile(assPath)
+	if err != nil {
+		t.Fatalf("failed to read ASS file: %v", err)
+	}
+	assStr := string(assBytes)
+
+	if !strings.Contains(assStr, "PlayResX: 1440") {
+		t.Errorf("ASS file missing PlayResX: 1440, got:\n%s", assStr)
+	}
+	if !strings.Contains(assStr, "PlayResY: 960") {
+		t.Errorf("ASS file missing PlayResY: 960, got:\n%s", assStr)
+	}
+	// Scaled Y = 400 * (960/480) = 800, Height = 40 * 2 = 80.
+	// centerY = 800 + 40 = 840 >= 640 (2/3 of 960), so it must be row 1 (bottom alignment: \an1, \an2, or \an3).
+	// It must NOT be vertically centered (an4, an5, an6).
+	if strings.Contains(assStr, "\\an4") || strings.Contains(assStr, "\\an5") || strings.Contains(assStr, "\\an6") {
+		t.Errorf("ASS subtitle incorrectly centered vertically:\n%s", assStr)
+	}
+	// For bottom row, anchor Y is y + height = 800 + 80 = 880.
+	if !strings.Contains(assStr, ",880)") {
+		t.Errorf("ASS subtitle anchor Y should be 880 at the bottom, got:\n%s", assStr)
+	}
+
+	// 2. WebVTT output verification
+	vttPath := filepath.Join(tempDir, "vobsub_scaled.vtt")
+	cfgVTT := &config.Config{
+		Format:  "webvtt",
+		Workers: 1,
+	}
+	cfgVTT.OCR.Language = "English"
+
+	err = processSubtitleItems(context.Background(), items, vttPath, cfgVTT, ocrClient, "prompt", true, logger, targetDim)
+	if err != nil {
+		t.Fatalf("processSubtitleItems WebVTT failed: %v", err)
+	}
+
+	vttBytes, err := os.ReadFile(vttPath)
+	if err != nil {
+		t.Fatalf("failed to read WebVTT file: %v", err)
+	}
+	vttStr := string(vttBytes)
+
+	// Scaled Y = 800 in 960 => 800*100/960 = 83%.
+	// If unscaled, Y=400 in 960 => 400*100/960 = 41% (which was the bug: vertically centered).
+	if strings.Contains(vttStr, "line:41%") || strings.Contains(vttStr, "line:42%") {
+		t.Errorf("WebVTT subtitle incorrectly centered vertically (~41%%):\n%s", vttStr)
+	}
+	if !strings.Contains(vttStr, "line:83%") {
+		t.Errorf("WebVTT subtitle missing line:83%%, got:\n%s", vttStr)
+	}
+}
+
+func TestProcessSubtitleItems_PALVobSubScaling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": "PAL Bottom Subtitle",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	logger := log.New(bytes.NewBuffer(nil))
+	ocrClient := ocr.NewClient(server.URL, "test-key", "gpt-4o")
+
+	// PAL 720x576 item placed near bottom (Y=490 in 576 height)
+	items := []subtitle.Item{
+		{
+			Index:       1,
+			StartTime:   1000 * 1000 * 1000,
+			EndTime:     2000 * 1000 * 1000,
+			X:           60,
+			Y:           490,
+			Width:       200,
+			Height:      40,
+			VideoWidth:  720,
+			VideoHeight: 576,
+			PNGData:     []byte{1, 2, 3},
+		},
+	}
+
+	targetDim := Dimensions{Width: 1440, Height: 960}
+
+	// 1. ASS output verification
+	assPath := filepath.Join(tempDir, "pal_scaled.ass")
+	cfgASS := &config.Config{
+		Format:  "ass",
+		Workers: 1,
+	}
+	cfgASS.OCR.Language = "English"
+
+	err := processSubtitleItems(context.Background(), items, assPath, cfgASS, ocrClient, "prompt", true, logger, targetDim)
+	if err != nil {
+		t.Fatalf("processSubtitleItems PAL ASS failed: %v", err)
+	}
+
+	assBytes, err := os.ReadFile(assPath)
+	if err != nil {
+		t.Fatalf("failed to read ASS file: %v", err)
+	}
+	assStr := string(assBytes)
+
+	if !strings.Contains(assStr, "PlayResX: 1440") || !strings.Contains(assStr, "PlayResY: 960") {
+		t.Errorf("ASS file missing 1440x960 PlayRes:\n%s", assStr)
+	}
+	// Must not be vertically centered (\an4, \an5, \an6)
+	if strings.Contains(assStr, "\\an4") || strings.Contains(assStr, "\\an5") || strings.Contains(assStr, "\\an6") {
+		t.Errorf("PAL ASS subtitle incorrectly centered vertically:\n%s", assStr)
+	}
+
+	// 2. WebVTT output verification
+	vttPath := filepath.Join(tempDir, "pal_scaled.vtt")
+	cfgVTT := &config.Config{
+		Format:  "webvtt",
+		Workers: 1,
+	}
+	cfgVTT.OCR.Language = "English"
+
+	err = processSubtitleItems(context.Background(), items, vttPath, cfgVTT, ocrClient, "prompt", true, logger, targetDim)
+	if err != nil {
+		t.Fatalf("processSubtitleItems PAL WebVTT failed: %v", err)
+	}
+
+	vttBytes, err := os.ReadFile(vttPath)
+	if err != nil {
+		t.Fatalf("failed to read WebVTT file: %v", err)
+	}
+	vttStr := string(vttBytes)
+
+	// Y = round(490 * 960 / 576) = 817. linePct = 817 * 100 / 960 = 85%.
+	if !strings.Contains(vttStr, "line:85%") {
+		t.Errorf("PAL WebVTT subtitle missing line:85%%, got:\n%s", vttStr)
+	}
+}
+
+func TestProcessSubtitleItems_PALFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": "PAL Fallback Subtitle",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	logger := log.New(bytes.NewBuffer(nil))
+	ocrClient := ocr.NewClient(server.URL, "test-key", "gpt-4o")
+
+	// Subtitle with VideoWidth=0, VideoHeight=0 and Y=500, H=40 (exceeds 480, fits in 576)
+	items := []subtitle.Item{
+		{
+			Index:       1,
+			StartTime:   1000 * 1000 * 1000,
+			EndTime:     2000 * 1000 * 1000,
+			X:           50,
+			Y:           500,
+			Width:       200,
+			Height:      40,
+			VideoWidth:  0,
+			VideoHeight: 0,
+			PNGData:     []byte{1, 2, 3},
+		},
+	}
+
+	// 1. ASS output verification
+	assPath := filepath.Join(tempDir, "pal_fallback.ass")
+	cfgASS := &config.Config{
+		Format:  "ass",
+		Workers: 1,
+	}
+	cfgASS.OCR.Language = "English"
+
+	err := processSubtitleItems(context.Background(), items, assPath, cfgASS, ocrClient, "prompt", true, logger, Dimensions{})
+	if err != nil {
+		t.Fatalf("processSubtitleItems PAL fallback ASS failed: %v", err)
+	}
+
+	assBytes, err := os.ReadFile(assPath)
+	if err != nil {
+		t.Fatalf("failed to read ASS file: %v", err)
+	}
+	assStr := string(assBytes)
+
+	// Should fallback to 720x576 (PAL), not 1920x1080
+	if !strings.Contains(assStr, "PlayResX: 720") || !strings.Contains(assStr, "PlayResY: 576") {
+		t.Errorf("ASS file expected 720x576 PlayRes, got:\n%s", assStr)
+	}
+	if strings.Contains(assStr, "PlayResX: 1920") || strings.Contains(assStr, "PlayResY: 1080") {
+		t.Errorf("ASS file incorrectly fell back to 1080p for PAL bounds:\n%s", assStr)
+	}
+
+	// 2. WebVTT output verification
+	vttPath := filepath.Join(tempDir, "pal_fallback.vtt")
+	cfgVTT := &config.Config{
+		Format:  "webvtt",
+		Workers: 1,
+	}
+	cfgVTT.OCR.Language = "English"
+
+	err = processSubtitleItems(context.Background(), items, vttPath, cfgVTT, ocrClient, "prompt", true, logger, Dimensions{})
+	if err != nil {
+		t.Fatalf("processSubtitleItems PAL fallback WebVTT failed: %v", err)
+	}
+
+	vttBytes, err := os.ReadFile(vttPath)
+	if err != nil {
+		t.Fatalf("failed to read WebVTT file: %v", err)
+	}
+	vttStr := string(vttBytes)
+
+	// Y=500 in 576 => 500*100/576 = 86%. If 1080, 500*100/1080 = 46% (centered)
+	if strings.Contains(vttStr, "line:46%") {
+		t.Errorf("WebVTT subtitle incorrectly centered using 1080p fallback:\n%s", vttStr)
+	}
+	if !strings.Contains(vttStr, "line:86%") {
+		t.Errorf("WebVTT subtitle missing line:86%%, got:\n%s", vttStr)
+	}
+}
+
 

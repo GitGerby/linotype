@@ -19,10 +19,20 @@ func Write(w io.Writer, events []subtitle.Event) error {
 	videoWidth := events[0].VideoWidth
 	videoHeight := events[0].VideoHeight
 	if videoWidth == 0 {
-		videoWidth = 1920
+		if events[0].X+events[0].Width <= 720 && events[0].Y+events[0].Height <= 576 {
+			videoWidth = 720
+		} else {
+			videoWidth = 1920
+		}
 	}
 	if videoHeight == 0 {
-		videoHeight = 1080
+		if events[0].X+events[0].Width <= 720 && events[0].Y+events[0].Height <= 480 {
+			videoHeight = 480
+		} else if events[0].X+events[0].Width <= 720 && events[0].Y+events[0].Height <= 576 {
+			videoHeight = 576
+		} else {
+			videoHeight = 1080
+		}
 	}
 
 	fontSize := int(math.Round(48.0 * float64(videoHeight) / 1080.0))
