@@ -81,7 +81,7 @@ func (c *Client) Recognize(ctx context.Context, pngData []byte, systemPrompt str
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: msgContent},
 		},
-		MaxTokens: 512,
+		MaxTokens: 8192,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -134,4 +134,3 @@ func (c *Client) Recognize(ctx context.Context, pngData []byte, systemPrompt str
 
 	return strings.TrimSpace(ocrResp.Choices[0].Message.Content), nil
 }
-
