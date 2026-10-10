@@ -122,7 +122,11 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 			continue
 		}
 
-		img, domColor, err := Render(spu.Pixels, spu.Width, spu.Height, spu.Colors, spu.Alphas, idxInfo.Palette)
+		pal := idxInfo.Palette
+		if pal == nil {
+			pal = DefaultPalette()
+		}
+		img, domColor, err := Render(spu.Pixels, spu.Width, spu.Height, spu.Colors, spu.Alphas, pal)
 		if err != nil {
 			continue
 		}

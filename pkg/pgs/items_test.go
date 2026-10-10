@@ -206,3 +206,25 @@ func TestRenderDisplaySet_MultipleObjectsUnordered(t *testing.T) {
 		t.Errorf("expected dimensions (202, 202), got (%d, %d)", w, h)
 	}
 }
+
+func TestDominantColor_OutlineIgnored(t *testing.T) {
+	var pal Palette
+	// Entry 0: transparent
+	pal.Entries[0] = PaletteEntry{Alpha: 0}
+	// Entry 1: black outline (Y=16, Cb=128, Cr=128, Alpha=255)
+	pal.Entries[1] = PaletteEntry{Y: 16, Cb: 128, Cr: 128, Alpha: 255}
+	// Entry 2: white text (Y=235, Cb=128, Cr=128, Alpha=255)
+	pal.Entries[2] = PaletteEntry{Y: 235, Cb: 128, Cr: 128, Alpha: 255}
+
+	var usageCounts [256]int
+	// Outline has 5,000 pixels, white text has 2,000 pixels
+	usageCounts[1] = 5000
+	usageCounts[2] = 2000
+
+	domColor := DominantColor(&pal, usageCounts)
+	// Must pick white text (Y=235), not black outline (Y=16)
+	if domColor.R < 200 || domColor.G < 200 || domColor.B < 200 {
+		t.Errorf("expected dominant color to be white text, got %+v", domColor)
+	}
+}
+

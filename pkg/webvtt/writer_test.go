@@ -97,4 +97,53 @@ func TestWriteWebVTT_4K(t *testing.T) {
 	}
 }
 
+func TestWriteWebVTT_ColorHandling(t *testing.T) {
+	events := []subtitle.Event{
+		{
+			Index:       1,
+			StartTime:   time.Second,
+			EndTime:     2 * time.Second,
+			Text:        "Black outline color must not produce font color tag",
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+			Color:       color.RGBA{16, 16, 16, 255}, // Studio black
+		},
+		{
+			Index:       2,
+			StartTime:   3 * time.Second,
+			EndTime:     4 * time.Second,
+			Text:        "Rec.709 studio white must not produce font color tag",
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+			Color:       color.RGBA{235, 235, 235, 255},
+		},
+		{
+			Index:       3,
+			StartTime:   5 * time.Second,
+			EndTime:     6 * time.Second,
+			Text:        "Yellow subtitle text must produce font color tag",
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+			Color:       color.RGBA{255, 255, 0, 255},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, events); err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "<font color=\"#101010\">") || strings.Contains(out, "<font color=\"#000000\">") {
+		t.Errorf("black/dark font color tag generated in WebVTT output:\n%s", out)
+	}
+	if strings.Contains(out, "<font color=\"#EBEBEB\">") {
+		t.Errorf("studio white font color tag generated in WebVTT output:\n%s", out)
+	}
+	if !strings.Contains(out, "<font color=\"#FFFF00\">Yellow subtitle text must produce font color tag</font>") {
+		t.Errorf("expected yellow font color tag in WebVTT output:\n%s", out)
+	}
+}
+
+
 

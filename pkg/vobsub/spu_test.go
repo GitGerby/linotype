@@ -44,3 +44,27 @@ func TestParseSPU(t *testing.T) {
 		t.Errorf("expected color 0 to be 4, got %d", spu.Colors[0])
 	}
 }
+
+func TestRender_DominantColorOutlineIgnored(t *testing.T) {
+	// 4 pixels:
+	// pixel 0: color 2 (outline)
+	// pixel 1: color 2 (outline)
+	// pixel 2: color 2 (outline)
+	// pixel 3: color 1 (pattern/text)
+	// Outline has 3 pixels, pattern text has 1 pixel.
+	pixels := []byte{2, 2, 2, 1}
+	colors := [4]uint8{0, 2, 1, 3} // colors[1] = palette[2] (white), colors[2] = palette[1] (black)
+	alphas := [4]uint8{0, 255, 255, 255}
+	palette := DefaultPalette() // palette[1] is black, palette[2] is white
+
+	_, domColor, err := Render(pixels, 2, 2, colors, alphas, palette)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Dominant color must be white text (palette[2]), not black outline (palette[1])
+	if domColor.R < 200 || domColor.G < 200 || domColor.B < 200 {
+		t.Errorf("expected white text dominant color, got %+v", domColor)
+	}
+}
+

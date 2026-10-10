@@ -39,12 +39,45 @@ func clamp(v float64) uint8 {
 }
 
 // DominantColor returns the most frequently used non-transparent,
-// non-background color in the palette based on the given usage counts.
-// This is used to determine the text color for subtitle formatting.
+// non-background text color in the palette based on the given usage counts.
+// It prioritizes actual text pixels by ignoring dark outlines, shadows,
+// and translucent pixels in the first pass.
 func DominantColor(palette *Palette, usageCounts [256]int) color.RGBA {
 	maxCount := 0
 	bestIndex := byte(0)
 
+	// First pass: look for non-dark, high-alpha text pixels (excluding outline and shadow)
+	for i := 0; i < 256; i++ {
+		entry := palette.Entries[i]
+		if entry.Alpha < 64 {
+			continue
+		}
+
+		diffCb := int(entry.Cb) - 128
+		if diffCb < 0 {
+			diffCb = -diffCb
+		}
+		diffCr := int(entry.Cr) - 128
+		if diffCr < 0 {
+			diffCr = -diffCr
+		}
+		isNeutral := diffCb <= 20 && diffCr <= 20
+		if isNeutral && entry.Y < 80 {
+			// Dark outline or shadow
+			continue
+		}
+
+		if usageCounts[i] > maxCount {
+			maxCount = usageCounts[i]
+			bestIndex = byte(i)
+		}
+	}
+
+	if maxCount > 0 {
+		return palette.ToRGBA(bestIndex)
+	}
+
+	// Second pass fallback: any non-transparent pixel if all visible pixels are dark
 	for i := 0; i < 256; i++ {
 		if palette.Entries[i].Alpha == 0 {
 			continue

@@ -3,6 +3,7 @@ package ass
 import (
 	"bytes"
 	"image/color"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,5 +247,54 @@ func TestWriteASS_AllAlignments(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteASS_ColorHandling(t *testing.T) {
+	events := []subtitle.Event{
+		{
+			Index:       1,
+			StartTime:   time.Second,
+			EndTime:     2 * time.Second,
+			Text:        "Black outline color must not produce color tag",
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+			Color:       color.RGBA{16, 16, 16, 255}, // Studio black
+		},
+		{
+			Index:       2,
+			StartTime:   3 * time.Second,
+			EndTime:     4 * time.Second,
+			Text:        "Rec.709 studio white must not produce color tag",
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+			Color:       color.RGBA{235, 235, 235, 255},
+		},
+		{
+			Index:       3,
+			StartTime:   5 * time.Second,
+			EndTime:     6 * time.Second,
+			Text:        "Yellow subtitle text must produce color tag",
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+			Color:       color.RGBA{255, 255, 0, 255},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := Write(&buf, events); err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	out := buf.String()
+
+	if strings.Contains(out, "\\c&H101010&") || strings.Contains(out, "\\c&H000000&") {
+		t.Errorf("black/dark color tag generated in ASS output:\n%s", out)
+	}
+	if strings.Contains(out, "\\c&HEBEBEB&") {
+		t.Errorf("studio white color tag generated in ASS output:\n%s", out)
+	}
+	if !strings.Contains(out, "\\c&H00FFFF&") {
+		t.Errorf("expected yellow color tag \\c&H00FFFF& in ASS output:\n%s", out)
+	}
+}
+
 
 

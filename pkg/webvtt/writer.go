@@ -42,7 +42,7 @@ func Write(w io.Writer, events []subtitle.Event) error {
 		cueSettings := fmt.Sprintf("line:%d%% position:%d%% align:%s", linePct, posPct, align)
 		
 		text := ev.Text
-		if ev.Color.A != 0 && (ev.Color.R != 255 || ev.Color.G != 255 || ev.Color.B != 255) {
+		if subtitle.IsCustomTextColor(ev.Color) {
 			text = fmt.Sprintf("<font color=\"#%02X%02X%02X\">%s</font>", ev.Color.R, ev.Color.G, ev.Color.B, text)
 		}
 

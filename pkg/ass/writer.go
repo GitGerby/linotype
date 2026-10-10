@@ -80,7 +80,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 		align := calculateAlignment(x, y, width, height, videoWidth, videoHeight)
 		posX, posY := calculateAnchor(x, y, width, height, align)
 		colorTag := ""
-		if ev.Color.A != 0 && (ev.Color.R != 255 || ev.Color.G != 255 || ev.Color.B != 255) {
+		if subtitle.IsCustomTextColor(ev.Color) {
 			colorTag = fmt.Sprintf("\\c&H%02X%02X%02X&", ev.Color.B, ev.Color.G, ev.Color.R)
 		}
 
