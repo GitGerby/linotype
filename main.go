@@ -43,7 +43,7 @@ func main() {
 }
 
 func run() error {
-	formatFlag := flag.String("format", "", "Output subtitle format: ass or webvtt (default: from config or ass)")
+	formatFlag := flag.String("format", "webvtt", "Output subtitle format: ass or webvtt (default: from config or webvtt)")
 	workersFlag := flag.Int("workers", 0, "Number of concurrent OCR workers (default: from config or 4)")
 	languageFlag := flag.String("language", "", "Language hint for OCR (default: from config or English)")
 	configFlag := flag.String("config", "", "Path to YAML config file")
@@ -298,7 +298,7 @@ func processIDX(ctx context.Context, idxPath string, cfg *config.Config, ocrClie
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		
+
 		items, err := vobsub.ParseIndexedWithInfo(idxInfo, subFile, track.Index)
 		if err != nil {
 			logger.Warn("Failed to parse track", "track", track.Index, "err", err)
