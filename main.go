@@ -187,7 +187,8 @@ func processContainerTrack(ctx context.Context, mediaPath string, track extract.
 		return ctx.Err()
 	}
 
-	if track.Codec == extract.CodecPGS {
+	switch track.Codec {
+	case extract.CodecPGS:
 		tempSup, err := os.CreateTemp("", fmt.Sprintf("linotype_track%d_*.sup", track.RelIndex))
 		if err != nil {
 			return err
@@ -205,7 +206,7 @@ func processContainerTrack(ctx context.Context, mediaPath string, track extract.
 		if err := processSUP(ctx, tempSupPath, outPath, cfg, ocrClient, prompt, quiet, logger, Dimensions{Width: vidW, Height: vidH}); err != nil {
 			return err
 		}
-	} else if track.Codec == extract.CodecVobSub {
+	case extract.CodecVobSub:
 		tempSub, err := os.CreateTemp("", fmt.Sprintf("linotype_track%d_*.sub", track.RelIndex))
 		if err != nil {
 			return err
