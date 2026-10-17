@@ -14,6 +14,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Format != "ass" {
 		t.Errorf("expected ass format, got %s", cfg.Format)
 	}
+	if cfg.Debug != false {
+		t.Errorf("expected default debug false, got %v", cfg.Debug)
+	}
+	if cfg.PNGExport != "" {
+		t.Errorf("expected default png_export empty, got %q", cfg.PNGExport)
+	}
 }
 
 func TestLoad_CustomFile(t *testing.T) {
@@ -23,6 +29,8 @@ func TestLoad_CustomFile(t *testing.T) {
 api:
   model: custom-model
 workers: 8
+debug: true
+png_export: /tmp/exported_pngs
 `
 	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
 		t.Fatal(err)
@@ -37,6 +45,12 @@ workers: 8
 	}
 	if cfg.API.Model != "custom-model" {
 		t.Errorf("expected custom-model, got %s", cfg.API.Model)
+	}
+	if !cfg.Debug {
+		t.Errorf("expected debug true, got %v", cfg.Debug)
+	}
+	if cfg.PNGExport != "/tmp/exported_pngs" {
+		t.Errorf("expected png_export /tmp/exported_pngs, got %s", cfg.PNGExport)
 	}
 	// defaults preserved
 	if cfg.Format != "ass" {

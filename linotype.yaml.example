@@ -18,3 +18,7 @@ ocr:
 workers: 4
 format: "ass"
 
+# Debug options (writes a copy of every PNG sent to the LLM to png_export when debug is true)
+# debug: false
+# png_export: ""
+

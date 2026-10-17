@@ -115,7 +115,7 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 	var items []subtitle.Item
 	// Substream ID in idx/sub is usually 0x20 + track.Index, but the cue points directly to the packet start.
 	// We can just read from the file position.
-	
+
 	vw := 720
 	vh := 480
 	if idxInfo != nil && idxInfo.Width > 0 && idxInfo.Height > 0 {
@@ -170,7 +170,19 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 		if pal == nil {
 			pal = DefaultPalette()
 		}
-		img, domColor, err := Render(spu.Pixels, spu.Width, spu.Height, spu.Colors, spu.Alphas, pal)
+		colors := spu.Colors
+		alphas := spu.Alphas
+		if idxInfo.CustomColors != nil && idxInfo.CustomColors.Enabled {
+			colors = [4]uint8{0, 1, 2, 3}
+			for k := 0; k < 4; k++ {
+				if idxInfo.CustomColors.Tridx[k] {
+					alphas[k] = 0
+				} else if alphas[k] == 0 {
+					alphas[k] = 255
+				}
+			}
+		}
+		img, domColor, err := Render(spu.Pixels, spu.Width, spu.Height, colors, alphas, pal)
 		if err != nil {
 			continue
 		}
@@ -190,10 +202,10 @@ func ParseIndexedWithInfo(idxInfo *IdxInfo, subReader io.ReadSeeker, trackIndex 
 		} else if i+1 < len(track.Cues) {
 			end, err = parseTimestamp(track.Cues[i+1].Timestamp)
 			if err != nil {
-				end = start + 5 * time.Second
+				end = start + 5*time.Second
 			}
 		} else {
-			end = start + 5 * time.Second
+			end = start + 5*time.Second
 		}
 
 		items = append(items, subtitle.Item{

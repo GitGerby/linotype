@@ -73,6 +73,8 @@ You can also set API settings via environment variables:
 - `LINOTYPE_API_BASE`
 - `LINOTYPE_API_KEY`
 - `LINOTYPE_MODEL`
+- `LINOTYPE_DEBUG`
+- `LINOTYPE_PNG_EXPORT`
 
 ---
 
@@ -94,6 +96,8 @@ linotype [flags] <input.mkv|input.sup>
 | `-api-base` | `""` | Override API base URL |
 | `-api-key` | `""` | Override API key |
 | `-model` | `""` | Override model name |
+| `-debug` | `false` | Enable debug logging |
+| `-png_export` | `""` | Directory to export copies of PNG images sent to LLM (requires `-debug`) |
 
 ### Examples
 

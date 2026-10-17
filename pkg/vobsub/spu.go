@@ -143,9 +143,9 @@ func ParseSPU(data []byte) (*SPUData, error) {
 
 type bitReader struct {
 	data []byte
-	pos  int // byte position
+	pos  int   // byte position
 	bits uint8 // current byte
-	n    int // number of bits left in current byte
+	n    int   // number of bits left in current byte
 }
 
 func (r *bitReader) readBits(count int) int {
@@ -209,11 +209,11 @@ func decodeRLE(data []byte, width, height, topOffset, bottomOffset int) []byte {
 						}
 					}
 				}
-				
+
 				if length == 0 {
 					length = width - x
 				}
-				
+
 				for i := 0; i < length && x < width; i++ {
 					pixels[y*width+x] = byte(color)
 					x++

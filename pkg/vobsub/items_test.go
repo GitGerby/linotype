@@ -22,9 +22,16 @@ func buildSyntheticStream() []byte {
 	binary.BigEndian.PutUint16(spuData[12:14], 34)
 
 	idx := 14
-	spuData[idx] = 0x01; idx++ // STA_DSP
-	spuData[idx] = 0x03; spuData[idx+1] = 0x12; spuData[idx+2] = 0x34; idx += 3 // SET_COLOR
-	spuData[idx] = 0x04; spuData[idx+1] = 0x56; spuData[idx+2] = 0x78; idx += 3 // SET_CONTR
+	spuData[idx] = 0x01
+	idx++ // STA_DSP
+	spuData[idx] = 0x03
+	spuData[idx+1] = 0x12
+	spuData[idx+2] = 0x34
+	idx += 3 // SET_COLOR
+	spuData[idx] = 0x04
+	spuData[idx+1] = 0x56
+	spuData[idx+2] = 0x78
+	idx += 3 // SET_CONTR
 	// SET_DAREA: X=50, colEnd=249, Y=400, rowEnd=439
 	// colStart = 50 (0x032), colEnd = 249 (0x0F9) -> 0x03, 0x20, 0xF9
 	// rowStart = 400 (0x190), rowEnd = 439 (0x1B7) -> 0x19, 0x01, 0xB7
@@ -144,4 +151,3 @@ func TestParseStream_PALDimensions(t *testing.T) {
 		t.Errorf("expected 720x576, got %dx%d", items[0].VideoWidth, items[0].VideoHeight)
 	}
 }
-

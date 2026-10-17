@@ -12,10 +12,10 @@ func TestParsePSStream(t *testing.T) {
 		0x00, 0x00, 0x01, 0xBD,
 		0x00, 0x0C, // PES length 12
 		0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01, // PES header + PTS
-		0x20, // Substream ID
+		0x20,             // Substream ID
 		0x00, 0x03, 0xFF, // SPU bytes
 	}
-	
+
 	spus, err := ParsePSStream(bytes.NewReader(data), 0x20)
 	if err != nil {
 		t.Fatalf("ParsePSStream failed: %v", err)

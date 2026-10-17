@@ -8,15 +8,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // Client talks to an OpenAI-compatible vision API.
 type Client struct {
-	BaseURL    string
-	APIKey     string
-	Model      string
-	HTTPClient *http.Client
+	BaseURL     string
+	APIKey      string
+	Model       string
+	HTTPClient  *http.Client
+	Debug       bool
+	PNGExport   string
+	exportCount atomic.Uint64
 }
 
 // NewClient creates a new OCR client.
@@ -63,6 +69,18 @@ type ocrResponse struct {
 // Recognize sends a PNG image to the LLM and returns the OCR'd text.
 // The systemPrompt provides instructions to the model.
 func (c *Client) Recognize(ctx context.Context, pngData []byte, systemPrompt string) (string, error) {
+	if c.Debug && c.PNGExport != "" {
+		if err := os.MkdirAll(c.PNGExport, 0755); err != nil {
+			return "", fmt.Errorf("failed to create PNG export directory: %w", err)
+		}
+		idx := c.exportCount.Add(1)
+		filename := fmt.Sprintf("sub_%05d.png", idx)
+		filePath := filepath.Join(c.PNGExport, filename)
+		if err := os.WriteFile(filePath, pngData, 0644); err != nil {
+			return "", fmt.Errorf("failed to export debug PNG: %w", err)
+		}
+	}
+
 	b64Image := base64.StdEncoding.EncodeToString(pngData)
 	imageURL := fmt.Sprintf("data:image/png;base64,%s", b64Image)
 
@@ -133,4 +151,14 @@ func (c *Client) Recognize(ctx context.Context, pngData []byte, systemPrompt str
 	}
 
 	return strings.TrimSpace(ocrResp.Choices[0].Message.Content), nil
+}
+
+// ExportCount returns the number of PNG files exported so far.
+func (c *Client) ExportCount() uint64 {
+	return c.exportCount.Load()
+}
+
+// ResetExportCount resets the export counter.
+func (c *Client) ResetExportCount() {
+	c.exportCount.Store(0)
 }

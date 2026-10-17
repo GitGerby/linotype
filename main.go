@@ -51,6 +51,9 @@ func run() error {
 	apiBaseFlag := flag.String("api-base", "", "OpenAI-compatible API base URL override")
 	apiKeyFlag := flag.String("api-key", "", "API key override")
 	modelFlag := flag.String("model", "", "Model name override")
+	debugFlag := flag.Bool("debug", false, "Enable debug mode")
+	pngExportFlag := flag.String("png_export", "", "Directory to export copies of PNG images sent to LLM (requires --debug)")
+	flag.StringVar(pngExportFlag, "png-export", "", "Alias for --png_export")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <input.mkv|input.vob|input.sup|input.idx|input.sub>\n\nFlags:\n", filepath.Base(os.Args[0]))
@@ -80,6 +83,12 @@ func run() error {
 	if env := os.Getenv("LINOTYPE_MODEL"); env != "" {
 		cfg.API.Model = env
 	}
+	if env := os.Getenv("LINOTYPE_DEBUG"); env != "" {
+		cfg.Debug = env == "true" || env == "1"
+	}
+	if env := os.Getenv("LINOTYPE_PNG_EXPORT"); env != "" {
+		cfg.PNGExport = env
+	}
 
 	providedFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) {
@@ -104,6 +113,12 @@ func run() error {
 	if providedFlags["model"] && *modelFlag != "" {
 		cfg.API.Model = *modelFlag
 	}
+	if providedFlags["debug"] {
+		cfg.Debug = *debugFlag
+	}
+	if providedFlags["png_export"] || providedFlags["png-export"] {
+		cfg.PNGExport = *pngExportFlag
+	}
 
 	if cfg.Format != "ass" && cfg.Format != "webvtt" {
 		return fmt.Errorf("unsupported output format %q (must be 'ass' or 'webvtt')", cfg.Format)
@@ -116,8 +131,16 @@ func run() error {
 		ReportTimestamp: true,
 		TimeFormat:      "15:04:05",
 	})
-	if *quietFlag {
+	if cfg.Debug {
+		logger.SetLevel(log.DebugLevel)
+	} else if *quietFlag {
 		logger.SetLevel(log.WarnLevel)
+	}
+
+	if cfg.Debug && cfg.PNGExport != "" {
+		logger.Debug("PNG debug export enabled", "dir", cfg.PNGExport)
+	} else if !cfg.Debug && cfg.PNGExport != "" {
+		logger.Warn("--png_export specified without --debug; PNG export is disabled")
 	}
 
 	if !*quietFlag {
@@ -129,6 +152,8 @@ func run() error {
 	}
 
 	ocrClient := ocr.NewClient(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.Model)
+	ocrClient.Debug = cfg.Debug
+	ocrClient.PNGExport = cfg.PNGExport
 	systemPrompt := ocr.BuildPrompt(cfg.OCR.Language, cfg.OCR.Prompt)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

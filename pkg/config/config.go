@@ -19,8 +19,10 @@ type Config struct {
 		Language string `yaml:"language"`
 		Prompt   string `yaml:"prompt"`
 	} `yaml:"ocr"`
-	Workers int    `yaml:"workers"`
-	Format  string `yaml:"format"`
+	Workers   int    `yaml:"workers"`
+	Format    string `yaml:"format"`
+	Debug     bool   `yaml:"debug"`
+	PNGExport string `yaml:"png_export"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -31,6 +33,8 @@ func DefaultConfig() *Config {
 	cfg.OCR.Language = "English"
 	cfg.API.BaseURL = "https://api.openai.com"
 	cfg.API.Model = "gpt-4o"
+	cfg.Debug = false
+	cfg.PNGExport = ""
 	return cfg
 }
 

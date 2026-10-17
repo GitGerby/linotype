@@ -146,9 +146,9 @@ func ParsePSStream(r io.Reader, targetSubStreamID byte) ([]RawSPU, error) {
 							currentPTS = pts
 							currentSubStream = subStreamID
 						}
-						
+
 						currentSPU = append(currentSPU, spuPayload...)
-						
+
 						if len(currentSPU) >= expectedSize && expectedSize > 0 {
 							spus = append(spus, RawSPU{
 								Data:        currentSPU[:expectedSize],
@@ -183,4 +183,3 @@ func ParsePSStream(r io.Reader, targetSubStreamID byte) ([]RawSPU, error) {
 
 	return spus, nil
 }
-

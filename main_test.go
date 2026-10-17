@@ -669,4 +669,84 @@ func TestProcessSubtitleItems_PALFallback(t *testing.T) {
 	}
 }
 
+func TestProcessSUP_PNGExportDebug(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": "Debug Exported Subtitle",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	supPath := filepath.Join(tempDir, "test.sup")
+	supBytes := buildTestSUP(t)
+	if err := os.WriteFile(supPath, supBytes, 0644); err != nil {
+		t.Fatalf("failed to write test.sup: %v", err)
+	}
+
+	logger := log.New(bytes.NewBuffer(nil))
+
+	// Case 1: Debug = true and PNGExport specified -> PNG should be exported
+	exportDir := filepath.Join(tempDir, "debug_pngs")
+	ocrClient := ocr.NewClient(server.URL, "test-key", "gpt-4o")
+	ocrClient.Debug = true
+	ocrClient.PNGExport = exportDir
+
+	outPath := filepath.Join(tempDir, "out.ass")
+	cfg := &config.Config{
+		Format:    "ass",
+		Workers:   1,
+		Debug:     true,
+		PNGExport: exportDir,
+	}
+	cfg.OCR.Language = "English"
+
+	err := processSUP(context.Background(), supPath, outPath, cfg, ocrClient, "ocr prompt", true, logger, Dimensions{})
+	if err != nil {
+		t.Fatalf("processSUP failed: %v", err)
+	}
+
+	exportedFile := filepath.Join(exportDir, "sub_00001.png")
+	data, err := os.ReadFile(exportedFile)
+	if err != nil {
+		t.Fatalf("expected exported PNG at %s: %v", exportedFile, err)
+	}
+	if len(data) == 0 {
+		t.Errorf("exported PNG should not be empty")
+	}
+
+	// Case 2: Debug = false and PNGExport specified -> PNG should NOT be exported
+	noDebugDir := filepath.Join(tempDir, "nodebug_pngs")
+	ocrClient2 := ocr.NewClient(server.URL, "test-key", "gpt-4o")
+	ocrClient2.Debug = false
+	ocrClient2.PNGExport = noDebugDir
+
+	outPath2 := filepath.Join(tempDir, "out2.ass")
+	cfg2 := &config.Config{
+		Format:    "ass",
+		Workers:   1,
+		Debug:     false,
+		PNGExport: noDebugDir,
+	}
+	cfg2.OCR.Language = "English"
+
+	err = processSUP(context.Background(), supPath, outPath2, cfg2, ocrClient2, "ocr prompt", true, logger, Dimensions{})
+	if err != nil {
+		t.Fatalf("processSUP failed: %v", err)
+	}
+
+	if _, err := os.Stat(noDebugDir); !os.IsNotExist(err) {
+		t.Errorf("expected %s to not exist when debug is false", noDebugDir)
+	}
+}
+
+
 
