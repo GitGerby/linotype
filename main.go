@@ -154,7 +154,7 @@ func run() error {
 	ocrClient := ocr.NewClient(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.Model)
 	ocrClient.Debug = cfg.Debug
 	ocrClient.PNGExport = cfg.PNGExport
-	systemPrompt := ocr.BuildPrompt(cfg.OCR.Language, cfg.OCR.Prompt)
+	prompt := ocr.BuildPrompt(cfg.OCR.Language, cfg.OCR.Prompt)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -162,14 +162,14 @@ func run() error {
 	ext := strings.ToLower(filepath.Ext(inputPath))
 	switch ext {
 	case ".mkv", ".vob":
-		return processContainer(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
+		return processContainer(ctx, inputPath, cfg, ocrClient, prompt, *quietFlag, logger)
 	case ".sup":
 		outPath := getOutputFilename(inputPath, -1, "", cfg.Format)
-		return processSUP(ctx, inputPath, outPath, cfg, ocrClient, systemPrompt, *quietFlag, logger, Dimensions{})
+		return processSUP(ctx, inputPath, outPath, cfg, ocrClient, prompt, *quietFlag, logger, Dimensions{})
 	case ".idx":
-		return processIDX(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
+		return processIDX(ctx, inputPath, cfg, ocrClient, prompt, *quietFlag, logger)
 	case ".sub":
-		return processSUB(ctx, inputPath, cfg, ocrClient, systemPrompt, *quietFlag, logger)
+		return processSUB(ctx, inputPath, cfg, ocrClient, prompt, *quietFlag, logger)
 	default:
 		return fmt.Errorf("unsupported input file format %q (expected .mkv, .vob, .sup, .idx, or .sub)", ext)
 	}

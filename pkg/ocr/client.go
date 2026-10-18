@@ -67,8 +67,8 @@ type ocrResponse struct {
 }
 
 // Recognize sends a PNG image to the LLM and returns the OCR'd text.
-// The systemPrompt provides instructions to the model.
-func (c *Client) Recognize(ctx context.Context, pngData []byte, systemPrompt string) (string, error) {
+// The prompt provides instructions to the model.
+func (c *Client) Recognize(ctx context.Context, pngData []byte, prompt string) (string, error) {
 	if c.Debug && c.PNGExport != "" {
 		if err := os.MkdirAll(c.PNGExport, 0755); err != nil {
 			return "", fmt.Errorf("failed to create PNG export directory: %w", err)
@@ -84,19 +84,23 @@ func (c *Client) Recognize(ctx context.Context, pngData []byte, systemPrompt str
 	b64Image := base64.StdEncoding.EncodeToString(pngData)
 	imageURL := fmt.Sprintf("data:image/png;base64,%s", b64Image)
 
-	msgContent := []interface{}{
-		imageContent{
-			Type: "image_url",
-			ImageURL: struct {
-				URL string `json:"url"`
-			}{URL: imageURL},
-		},
+	var msgContent []interface{}
+	if prompt != "" {
+		msgContent = append(msgContent, textContent{
+			Type: "text",
+			Text: prompt,
+		})
 	}
+	msgContent = append(msgContent, imageContent{
+		Type: "image_url",
+		ImageURL: struct {
+			URL string `json:"url"`
+		}{URL: imageURL},
+	})
 
 	reqBody := ocrRequest{
 		Model: c.Model,
 		Messages: []ocrMessage{
-			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: msgContent},
 		},
 		MaxTokens: 8192,

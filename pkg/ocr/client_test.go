@@ -23,7 +23,11 @@ func TestBuildPrompt(t *testing.T) {
 }
 
 func TestClient_Recognize_Success(t *testing.T) {
+	var receivedReq ocrRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
 		resp := ocrResponse{}
 		resp.Choices = append(resp.Choices, struct {
 			Message struct {
@@ -41,12 +45,81 @@ func TestClient_Recognize_Success(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL, "test", "model")
-	text, err := client.Recognize(context.Background(), []byte("png"), "prompt")
+	text, err := client.Recognize(context.Background(), []byte("png"), "test-prompt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if text != "Hello World" {
 		t.Errorf("expected 'Hello World', got '%s'", text)
+	}
+
+	if len(receivedReq.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(receivedReq.Messages))
+	}
+	if receivedReq.Messages[0].Role != "user" {
+		t.Errorf("expected role 'user', got %q", receivedReq.Messages[0].Role)
+	}
+	contentList, ok := receivedReq.Messages[0].Content.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{} content, got %T", receivedReq.Messages[0].Content)
+	}
+	if len(contentList) != 2 {
+		t.Fatalf("expected 2 content items, got %d", len(contentList))
+	}
+	textItem, ok := contentList[0].(map[string]interface{})
+	if !ok || textItem["type"] != "text" || textItem["text"] != "test-prompt" {
+		t.Errorf("unexpected text content: %+v", contentList[0])
+	}
+	imgItem, ok := contentList[1].(map[string]interface{})
+	if !ok || imgItem["type"] != "image_url" {
+		t.Errorf("unexpected image content: %+v", contentList[1])
+	}
+}
+
+func TestClient_Recognize_EmptyPrompt(t *testing.T) {
+	var receivedReq ocrRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+		resp := ocrResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}{
+			Message: struct {
+				Content string `json:"content"`
+			}{
+				Content: "Text",
+			},
+		})
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test", "model")
+	_, err := client.Recognize(context.Background(), []byte("png"), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(receivedReq.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(receivedReq.Messages))
+	}
+	if receivedReq.Messages[0].Role != "user" {
+		t.Errorf("expected role 'user', got %q", receivedReq.Messages[0].Role)
+	}
+	contentList, ok := receivedReq.Messages[0].Content.([]interface{})
+	if !ok {
+		t.Fatalf("expected []interface{} content, got %T", receivedReq.Messages[0].Content)
+	}
+	if len(contentList) != 1 {
+		t.Fatalf("expected 1 content item when prompt is empty, got %d", len(contentList))
+	}
+	imgItem, ok := contentList[0].(map[string]interface{})
+	if !ok || imgItem["type"] != "image_url" {
+		t.Errorf("unexpected image content: %+v", contentList[0])
 	}
 }
 
