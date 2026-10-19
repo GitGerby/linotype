@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -51,6 +52,7 @@ func run() error {
 	apiBaseFlag := flag.String("api-base", "", "OpenAI-compatible API base URL override")
 	apiKeyFlag := flag.String("api-key", "", "API key override")
 	modelFlag := flag.String("model", "", "Model name override")
+	temperatureFlag := flag.Float64("temperature", 0, "Sampling temperature for OCR LLM (default: from config or 1.0)")
 	debugFlag := flag.Bool("debug", false, "Enable debug mode")
 	pngExportFlag := flag.String("png_export", "", "Directory to export copies of PNG images sent to LLM (requires --debug)")
 	flag.StringVar(pngExportFlag, "png-export", "", "Alias for --png_export")
@@ -83,6 +85,11 @@ func run() error {
 	if env := os.Getenv("LINOTYPE_MODEL"); env != "" {
 		cfg.API.Model = env
 	}
+	if env := os.Getenv("LINOTYPE_TEMPERATURE"); env != "" {
+		if val, err := strconv.ParseFloat(env, 64); err == nil {
+			cfg.API.Temperature = val
+		}
+	}
 	if env := os.Getenv("LINOTYPE_DEBUG"); env != "" {
 		cfg.Debug = env == "true" || env == "1"
 	}
@@ -112,6 +119,9 @@ func run() error {
 	}
 	if providedFlags["model"] && *modelFlag != "" {
 		cfg.API.Model = *modelFlag
+	}
+	if providedFlags["temperature"] {
+		cfg.API.Temperature = *temperatureFlag
 	}
 	if providedFlags["debug"] {
 		cfg.Debug = *debugFlag
@@ -154,6 +164,7 @@ func run() error {
 	ocrClient := ocr.NewClient(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.Model)
 	ocrClient.Debug = cfg.Debug
 	ocrClient.PNGExport = cfg.PNGExport
+	ocrClient.Temperature = cfg.API.Temperature
 	prompt := ocr.BuildPrompt(cfg.OCR.Language, cfg.OCR.Prompt)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

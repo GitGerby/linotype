@@ -74,6 +74,9 @@ func TestClient_Recognize_Success(t *testing.T) {
 	if !ok || imgItem["type"] != "image_url" {
 		t.Errorf("unexpected image content: %+v", contentList[1])
 	}
+	if receivedReq.Temperature != 1.0 {
+		t.Errorf("expected default Temperature 1.0, got %f", receivedReq.Temperature)
+	}
 }
 
 func TestClient_Recognize_EmptyPrompt(t *testing.T) {
@@ -120,6 +123,80 @@ func TestClient_Recognize_EmptyPrompt(t *testing.T) {
 	imgItem, ok := contentList[0].(map[string]interface{})
 	if !ok || imgItem["type"] != "image_url" {
 		t.Errorf("unexpected image content: %+v", contentList[0])
+	}
+	if receivedReq.Temperature != 1.0 {
+		t.Errorf("expected default Temperature 1.0, got %f", receivedReq.Temperature)
+	}
+}
+
+func TestClient_Recognize_CustomTemperature(t *testing.T) {
+	var receivedReq ocrRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+		resp := ocrResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}{
+			Message: struct {
+				Content string `json:"content"`
+			}{
+				Content: "Text",
+			},
+		})
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test", "model")
+	client.Temperature = 0.7
+	_, err := client.Recognize(context.Background(), []byte("png"), "test-prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if receivedReq.Temperature != 0.7 {
+		t.Errorf("expected Temperature 0.7, got %f", receivedReq.Temperature)
+	}
+}
+
+func TestClient_Recognize_ZeroValueClientDefaultTemperature(t *testing.T) {
+	var receivedReq ocrRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+		resp := ocrResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}{
+			Message: struct {
+				Content string `json:"content"`
+			}{
+				Content: "Text",
+			},
+		})
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := &Client{
+		BaseURL:    srv.URL,
+		Model:      "model",
+		HTTPClient: &http.Client{},
+	}
+	_, err := client.Recognize(context.Background(), []byte("png"), "test-prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if receivedReq.Temperature != 1.0 {
+		t.Errorf("expected defaulted Temperature 1.0, got %f", receivedReq.Temperature)
 	}
 }
 

@@ -11,9 +11,10 @@ import (
 // Config holds all application configuration.
 type Config struct {
 	API struct {
-		BaseURL string `yaml:"base_url"`
-		APIKey  string `yaml:"api_key"`
-		Model   string `yaml:"model"`
+		BaseURL     string  `yaml:"base_url"`
+		APIKey      string  `yaml:"api_key"`
+		Model       string  `yaml:"model"`
+		Temperature float64 `yaml:"temperature"`
 	} `yaml:"api"`
 	OCR struct {
 		Language string `yaml:"language"`
@@ -33,6 +34,7 @@ func DefaultConfig() *Config {
 	cfg.OCR.Language = "English"
 	cfg.API.BaseURL = "https://api.openai.com"
 	cfg.API.Model = "gpt-4o"
+	cfg.API.Temperature = 1.0
 	cfg.Debug = false
 	cfg.PNGExport = ""
 	return cfg

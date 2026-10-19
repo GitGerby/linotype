@@ -19,6 +19,7 @@ type Client struct {
 	BaseURL     string
 	APIKey      string
 	Model       string
+	Temperature float64
 	HTTPClient  *http.Client
 	Debug       bool
 	PNGExport   string
@@ -28,17 +29,19 @@ type Client struct {
 // NewClient creates a new OCR client.
 func NewClient(baseURL, apiKey, model string) *Client {
 	return &Client{
-		BaseURL:    baseURL,
-		APIKey:     apiKey,
-		Model:      model,
-		HTTPClient: &http.Client{},
+		BaseURL:     baseURL,
+		APIKey:      apiKey,
+		Model:       model,
+		Temperature: 1.0,
+		HTTPClient:  &http.Client{},
 	}
 }
 
 type ocrRequest struct {
-	Model     string       `json:"model"`
-	Messages  []ocrMessage `json:"messages"`
-	MaxTokens int          `json:"max_tokens"`
+	Model       string       `json:"model"`
+	Messages    []ocrMessage `json:"messages"`
+	MaxTokens   int          `json:"max_tokens"`
+	Temperature float64      `json:"temperature"`
 }
 
 type ocrMessage struct {
@@ -98,12 +101,18 @@ func (c *Client) Recognize(ctx context.Context, pngData []byte, prompt string) (
 		}{URL: imageURL},
 	})
 
+	temp := c.Temperature
+	if temp == 0 {
+		temp = 1.0
+	}
+
 	reqBody := ocrRequest{
 		Model: c.Model,
 		Messages: []ocrMessage{
 			{Role: "user", Content: msgContent},
 		},
-		MaxTokens: 8192,
+		MaxTokens:   8192,
+		Temperature: temp,
 	}
 
 	jsonData, err := json.Marshal(reqBody)

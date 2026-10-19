@@ -748,5 +748,44 @@ func TestProcessSUP_PNGExportDebug(t *testing.T) {
 	}
 }
 
+func TestTemperaturePlumbing(t *testing.T) {
+	var receivedReq struct {
+		Temperature float64 `json:"temperature"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message": map[string]string{
+						"content": "Plumbed Subtitle",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.API.BaseURL = server.URL
+	cfg.API.Temperature = 0.42
+
+	ocrClient := ocr.NewClient(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.Model)
+	ocrClient.Temperature = cfg.API.Temperature
+
+	text, err := ocrClient.Recognize(context.Background(), []byte("png"), "prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "Plumbed Subtitle" {
+		t.Errorf("expected 'Plumbed Subtitle', got %q", text)
+	}
+	if receivedReq.Temperature != 0.42 {
+		t.Errorf("expected received temperature 0.42, got %f", receivedReq.Temperature)
+	}
+}
+
 
 
